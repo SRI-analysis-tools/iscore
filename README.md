@@ -1,2 +1,2 @@
-# iscore
+# iScore
 Rodent sleep scoring program
