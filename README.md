@@ -31,7 +31,7 @@ pip install mne
 
 pip install pyqtgraph
 
-*Note:* On MAc/Linux type python3 and pip3 instead of python and pip.
+**Note:** On Mac/Linux type python3 and pip3 instead of python and pip.
 
 
 # Execution
