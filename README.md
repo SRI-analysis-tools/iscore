@@ -6,6 +6,10 @@ Score can be a python file (pkl), a matlab file form Matlab's iscore (.mat) or a
 
 Scorings are saved as a pkl file and txt file, that can be loaded into Matlab's iScore.
 
+
+
+![GUI](screenshotjpg.jpg)
+
 # Installation
 Download the files in this repo to a folder
 
@@ -37,5 +41,3 @@ Open a terminal and type:
 PC: python repo path\escore.py
   
 Mac/Linux: python3 repo path/escore.py
-
-![GUI](screenshotjpg.jpg)
