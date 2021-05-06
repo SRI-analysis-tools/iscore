@@ -8,6 +8,7 @@ Scorings are saved as a pkl file and txt file, that can be loaded into Matlab's 
 
 # Installation
 Download the files in this repo to a folder
+
 Download and instal Python 3.8 (google it if you don't know how)
 
 Open terminal and type:
@@ -25,6 +26,7 @@ pip install pyqtgraph
 # Execution
 
 Open a terminal and type:
+
 PC: python <repo path>\escore.py
   
 Mac/Linux: python3 <repo path>/escore.py
