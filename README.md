@@ -6,4 +6,4 @@ Score can be a python file (pkl), a matlab file form Matlab's iscore (.mat) or a
 
 Scorings are saved as a pkl file and txt file, that can be loaded into Matlab's iScore.
 
-![GUI](screenshot.jpg)
+![GUI](screenshotjpg.jpg)
