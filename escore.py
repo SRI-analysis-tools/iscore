@@ -8,6 +8,7 @@ import pickle
 
 from matplotlib import pyplot as plt
 import scipy.io
+import scipy.io as sio
 from PyQt5.QtGui import QIcon, QPixmap, QImage, QKeyEvent
 from PyQt5.QtCore import Qt
 from collections import defaultdict
@@ -64,7 +65,7 @@ class MyForm(QMainWindow):
         self.ui.pushButton_19.clicked.connect(self.closeap)
         self.ui.horizontalScrollBar.valueChanged.connect(self.scrollbar_moved)
         self.ui.epoch_length.valueChanged.connect(self.val_ch_epl)
-        self.ui.epoch_length.editingFinished.connect(self.update_epl)
+        #self.ui.epoch_length.editingFinished.connect(self.update_epl) not working well for now
         self.ui.epoch_length_2.valueChanged.connect(self.update_tracel)
         self.ui.lineEdit.textChanged.connect(self.update_currep)
         self.ui.dateTimeEdit_4.dateTimeChanged.connect(self.update_epocht)
@@ -269,15 +270,25 @@ class MyForm(QMainWindow):
             self.scorefile = fileName[0]
             if self.scorefile.endswith('.mat'):
                 arrays = {}
+                try: 
+                    f = sio.loadmat(self.scorefile)
+                    for k, v in f.items():
+                        arrays[k] = numpy.array(v)
+                    m = arrays['zt0'].flatten()
+                    self.scoredict['zt0'] = m[0]
+                except NotImplementedError:    
+                    f = h5py.File(self.scorefile)
+                    for k, v in f.items():
+                        arrays[k] = numpy.array(v)
+                    m = arrays['zt0'].flatten()
+                    self.scoredict['zt0'] = ''.join([str(chr(c)) for c in m])
+                    # if 't0' in arrays.keys():
+                    #     m = arrays['t0'].flatten()
+                    #     self.scoredict['t0'] = ''.join([str(chr(c)) for c in m])
+                    
+                except:
+                    ValueError('could not read scoring mat file...')
 
-                f = h5py.File(self.scorefile)
-                for k, v in f.items():
-                    arrays[k] = numpy.array(v)
-                m = arrays['zt0'].flatten()
-                self.scoredict['zt0'] = ''.join([str(chr(c)) for c in m])
-                # if 't0' in arrays.keys():
-                #     m = arrays['t0'].flatten()
-                #     self.scoredict['t0'] = ''.join([str(chr(c)) for c in m])
                 self.scoredict['score']=arrays['sc'].flatten()
                 self.scoredict['el']=arrays['epocl'].flatten()[0]
                 print(len(self.scoredict['score']))
@@ -828,11 +839,7 @@ class MyForm(QMainWindow):
             if self.currep <self.maxep:
                 self.ui.lineEdit.setText(str(int(min([self.currep + 1,self.maxep-1]))))
             self.update_currep()
-        if event.key() == Qt.Key_U:
-            self.score[self.currep] = 1.1
-            if self.currep <self.maxep:
-                self.ui.lineEdit.setText(str(int(min([self.currep + 1,self.maxep-1]))))
-            self.update_currep()
+        
         if event.key() == Qt.Key_I:
             self.score[self.currep] = 2.1
             if self.currep <self.maxep:
@@ -867,6 +874,13 @@ class MyForm(QMainWindow):
             c1 = self.score[self.currep:] >=0
             c2 = self.score[self.currep:] < 1
             self.currep = numpy.argwhere(c1 & c2)[0] + self.currep
+            self.ui.lineEdit.setText(str(int(self.currep)))
+            self.ui.lineEdit.setText(str(int(self.currep)))
+            self.update_currep()
+        if event.key() == Qt.Key_U:
+            c1 = self.score[self.currep:] <0
+            c2 = self.score[self.currep:] > 3
+            self.currep = numpy.argwhere(c1 | c2)[0] + self.currep
             self.ui.lineEdit.setText(str(int(self.currep)))
             self.ui.lineEdit.setText(str(int(self.currep)))
             self.update_currep()
