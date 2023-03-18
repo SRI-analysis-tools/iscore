@@ -1,7 +1,15 @@
 import sys, os, numpy
-from PyQt5.QtWidgets import QMainWindow, QApplication, QFileDialog, QGraphicsScene, QGraphicsPixmapItem
+#os.environ['QT_AUTO_SCREEN_SCALE_FACTOR'] = '1'
+from PyQt6.QtWidgets import QMainWindow, QApplication, QFileDialog, QGraphicsScene, QGraphicsPixmapItem
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+# import sys
+# from PyQt5 import QtWidgets, QtCore, QtGui #pyqt stuff
+# QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling, True) #enable highdpi scaling
+# QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps, True) #use highdpi icons
+
+
+
 import time
 import pickle
 #from datetime import datetime, timedelta
@@ -9,8 +17,8 @@ import pickle
 from matplotlib import pyplot as plt
 import scipy.io
 import scipy.io as sio
-from PyQt5.QtGui import QIcon, QPixmap, QImage, QKeyEvent
-from PyQt5.QtCore import Qt
+from PyQt6.QtGui import QIcon, QPixmap, QImage, QKeyEvent
+from PyQt6.QtCore import Qt
 from collections import defaultdict
 import h5py
 import mne
@@ -24,7 +32,13 @@ import matplotlib.pyplot as plt
 import datetime
 from iscore import *
 from pyqtgraph import TextItem
-Qt.ApplicationAttribute(Qt.AA_Use96Dpi)
+# QCoreApplication::setAttribute(Qt::AA_DisableHighDpiScaling);
+#     if (qgetenv("QT_FONT_DPI").isEmpty()) {
+#         qputenv("QT_FONT_DPI", "84");
+#     }
+#Qt.ApplicationAttribute(Qt.AA_DisableHighDpiScaling)
+#Qt.ApplicationAttribute(Qt.AA_Use96Dpi)
+
 #import pandas as pd
 #from shutil import copyfile
 """If there is EEG, traces need to by synced with EEG. If traces include dropped frames, the they should match 
@@ -213,7 +227,7 @@ class MyForm(QMainWindow):
         else:
             fp = int(numpy.floor((self.maxep-self.neps)*self.epochl*self.sr))
         lp = int(numpy.floor(fp + self.tracedur * self.sr))
-        sch=2 #assuming ch2 is EMG
+        sch=1 #assuming ch1 is EMG
         self.maxEMG=numpy.max(self.edfmat[sch, fp:lp])**2
 
     def update_fixFFT(self):
@@ -764,17 +778,17 @@ class MyForm(QMainWindow):
         #ax.get_yaxis().set_visible(False)
         plt.show()
 
-    def keyPressEvent(self, event: QKeyEvent) -> None:
-        if event.key() == Qt.Key_Q:
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Q.value:
             print("Going to the next NREM epoch...")
-        if event.key() == Qt.Key_Down:
+        if event.key() == Qt.Key.Key_Down.value:
             if (self.currep - self.neps) >= 0:
                 self.ui.lineEdit.setText(str(int(self.currep - self.neps+1)))
                 self.update_currep()
             else:
                 self.ui.lineEdit.setText(str(int(self.halfneps)))
                 self.update_currep()
-        if event.key() == Qt.Key_Up:
+        if event.key() == Qt.Key.Key_Up.value:
             if (self.currep + self.neps) < (self.maxep):
                 self.ui.lineEdit.setText(str(int(self.currep + self.neps-1)))
                 self.update_currep()
@@ -784,100 +798,99 @@ class MyForm(QMainWindow):
                 self.ui.lineEdit.setText(str(int(self.maxep-self.halfneps)))
                 self.update_currep()
 
-        if event.key() == Qt.Key_Right:
+        if event.key() == Qt.Key.Key_Right.value:
             if (self.currep + 1) < (self.maxep):
                 self.ui.lineEdit.setText(str(int(min([self.currep + 1,self.maxep-1]))))
                 self.update_currep()
-        if event.key() == Qt.Key_Left:
+        if event.key() == Qt.Key.Key_Left.value:
             if self.currep > 0:
                 self.ui.lineEdit.setText(str(int(min([self.currep - 1,self.maxep-1]))))
                 self.update_currep()
                 # Scoring
-        if event.key() == Qt.Key_0:
+        if event.key() == Qt.Key.Key_0.value:
             self.score[self.currep] = 0
             if self.currep < self.maxep:
                 self.ui.lineEdit.setText(str(int(min([self.currep + 1,self.maxep-1]))))
             self.update_currep()
-        if event.key() == Qt.Key_1:
+        if event.key() == Qt.Key.Key_1.value:
             self.score[self.currep] = 1
             if self.currep <self.maxep:
                 self.ui.lineEdit.setText(str(int(min([self.currep + 1,self.maxep-1]))))
             self.update_currep()
-        if event.key() == Qt.Key_5:
+        if event.key() == Qt.Key.Key_5.value:
             self.score[self.currep] = 2
             if self.currep <self.maxep:
                 self.ui.lineEdit.setText(str(int(min([self.currep + 1,self.maxep-1]))))
             self.update_currep()
-        if event.key() == Qt.Key_7:
+        if event.key() == Qt.Key.Key_7.value:
             self.score[self.currep] = 1.1
             if self.currep <self.maxep:
                 self.ui.lineEdit.setText(str(int(min([self.currep + 1,self.maxep-1]))))
             self.update_currep()
-        if event.key() == Qt.Key_8:
+        if event.key() == Qt.Key.Key_8.value:
             self.score[self.currep] = 2.1
             if self.currep <self.maxep:
                 self.ui.lineEdit.setText(str(int(min([self.currep + 1,self.maxep-1]))))
             self.update_currep()
-        if event.key() == Qt.Key_9:
+        if event.key() == Qt.Key.Key_9.value:
             self.score[self.currep] = 0.1
             if self.currep <self.maxep:
                 self.ui.lineEdit.setText(str(int(min([self.currep + 1,self.maxep-1]))))
             self.update_currep()
         #same for normal keyboard in case there is no numpad:
-        if event.key() == Qt.Key_M:
+        if event.key() == Qt.Key.Key_M.value:
             self.score[self.currep] = 0
             if self.currep <self.maxep:
                 self.ui.lineEdit.setText(str(int(min([self.currep + 1,self.maxep-1]))))
             self.update_currep()
-        if event.key() == Qt.Key_J:
+        if event.key() == Qt.Key.Key_J.value:
             self.score[self.currep] = 1
             if self.currep <self.maxep:
                 self.ui.lineEdit.setText(str(int(min([self.currep + 1,self.maxep-1]))))
             self.update_currep()
-        if event.key() == Qt.Key_K:
+        if event.key() == Qt.Key.Key_K.value:
             self.score[self.currep] = 2
             if self.currep <self.maxep:
                 self.ui.lineEdit.setText(str(int(min([self.currep + 1,self.maxep-1]))))
             self.update_currep()
         
-        if event.key() == Qt.Key_I:
+        if event.key() == Qt.Key.Key_I.value:
             self.score[self.currep] = 2.1
             if self.currep <self.maxep:
                 self.ui.lineEdit.setText(str(int(min([self.currep + 1,self.maxep-1]))))
             self.update_currep()
-        if event.key() == Qt.Key_O:
+        if event.key() == Qt.Key.Key_O.value:
             self.score[self.currep] = 0.1
             if self.currep <self.maxep:
                 self.ui.lineEdit.setText(str(int(min([self.currep + 1,self.maxep-1]))))
             self.update_currep()
         #jumps to next non scored epoch
-        if event.key() == Qt.Key_N:
+        if event.key() == Qt.Key.Key_N.value:
             lnz = numpy.where(self.score[self.currep:] < 0)[0][0]+self.currep
             self.currep = lnz
             self.ui.lineEdit.setText(str(int(min([self.currep - 1, self.maxep - 1]))))
             self.update_currep()
 
-
-        if event.key() == Qt.Key_Q:
+        if event.key() == Qt.Key.Key_Q.value:
             c1=self.score[self.currep:] > 0.9
             c2=self.score[self.currep:] < 1.9
             self.currep = numpy.argwhere(c1 & c2)[0]+self.currep
             self.ui.lineEdit.setText(str(int(self.currep)))
             self.update_currep()
-        if event.key() == Qt.Key_R:
+        if event.key() == Qt.Key.Key_R.value:
             c1 = self.score[self.currep:] > 1.9
             c2 = self.score[self.currep:] < 2.9
             self.currep = numpy.argwhere(c1 & c2)[0] + self.currep
             self.ui.lineEdit.setText(str(int(self.currep)))
             self.update_currep()
-        if event.key() == Qt.Key_W:
+        if event.key() == Qt.Key.Key_W.value:
             c1 = self.score[self.currep:] >=0
             c2 = self.score[self.currep:] < 1
             self.currep = numpy.argwhere(c1 & c2)[0] + self.currep
             self.ui.lineEdit.setText(str(int(self.currep)))
             self.ui.lineEdit.setText(str(int(self.currep)))
             self.update_currep()
-        if event.key() == Qt.Key_U:
+        if event.key() == Qt.Key.Key_U.value:
             c1 = self.score[self.currep:] <0
             c2 = self.score[self.currep:] > 3
             self.currep = numpy.argwhere(c1 | c2)[0] + self.currep
@@ -889,4 +902,4 @@ if __name__=="__main__":
     app = QApplication(sys.argv)
     w = MyForm()
     w.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
