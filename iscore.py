@@ -138,7 +138,7 @@ class Ui_MainWindow(object):
         self.EMGch = QtWidgets.QSpinBox(parent=self.centralwidget)
         self.EMGch.setGeometry(QtCore.QRect(360, 890, 42, 22))
         self.EMGch.setMinimum(1)
-        self.EMGch.setMaximum(9)
+        self.EMGch.setMaximum(20)
         self.EMGch.setProperty("value", 2)
         self.EMGch.setObjectName("EMGch")
         self.timeEdit_3 = QtWidgets.QTimeEdit(parent=self.centralwidget)

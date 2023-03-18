@@ -1,4 +1,5 @@
-import sys, os, numpy
+import sys, os
+import numpy as np
 #os.environ['QT_AUTO_SCREEN_SCALE_FACTOR'] = '1'
 from PyQt6.QtWidgets import QMainWindow, QApplication, QFileDialog, QGraphicsScene, QGraphicsPixmapItem
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -135,21 +136,21 @@ class MyForm(QMainWindow):
         self.epochl = self.ui.epoch_length.value()
         self.maxep = int(self.edf.times[-1] // self.epochl)
         self.tracel = self.ui.epoch_length_2.value()
-        self.edfmat = numpy.asarray(self.edf.get_data())
+        self.edfmat = np.asarray(self.edf.get_data())
         npep = int(self.epochl * self.sr)
         leeg = len(self.edfmat[0, :])
         # self.edfmat[sch, fp:lp], pen=c[p])
         self.eegmat = self.edfmat[self.ui.EEGch.value() - 1, 0:npep * (leeg // npep)].reshape(leeg // npep, npep)
-        self.fftmat = numpy.zeros(numpy.shape(self.eegmat))
-        self.freqs = numpy.fft.fftfreq(npep, 1 / self.sr)
-        self.score = -1 * numpy.ones(self.maxep)
+        self.fftmat = np.zeros(np.shape(self.eegmat))
+        self.freqs = np.fft.fftfreq(npep, 1 / self.sr)
+        self.score = -1 * np.ones(self.maxep)
         for epoch in range(leeg // npep):
-            self.fftmat[epoch, :] = numpy.abs(numpy.fft.fft(self.eegmat[epoch, :])) ** 2
+            self.fftmat[epoch, :] = np.abs(np.fft.fft(self.eegmat[epoch, :])) ** 2
             # We only one the freqs between 0 and the max freq FFT
 
         # now finding the pos of the 0 and maxfrec
-        pos0 = numpy.argmin(numpy.abs(self.freqs))
-        posmax = numpy.argmin(numpy.abs(self.freqs - self.ui.maxF.value()))
+        pos0 = np.argmin(np.abs(self.freqs))
+        posmax = np.argmin(np.abs(self.freqs - self.ui.maxF.value()))
         self.fftmat = self.fftmat[:, pos0:posmax]
         self.freqs = self.freqs[pos0:posmax]
 
@@ -179,13 +180,13 @@ class MyForm(QMainWindow):
         faxis = list(self.freqs) * (2 * self.halfneps)
         # print(type(fft2pl))
         # print(len(fft2pl),len(faxis))
-        indx = numpy.arange(len(fft2pl))
+        indx = np.arange(len(fft2pl))
         self.pfft = plotCanvFFT.plot(indx, fft2pl, fillLevel=0, brush=(50, 50, 200, 100))
         plotCanvFFT.setXRange(indx[0], indx[-1], padding=0)
         if self.ui.checkBox_6.isChecked():
             ylim = self.maxFFT
         else:
-            ylim = numpy.max(fft2pl)
+            ylim = np.max(fft2pl)
         plotCanvFFT.setYRange(0, ylim, padding=0)
         indxb1 = indx[faxis == list(self.freqs)[0]]
         for x in indxb1:
@@ -216,19 +217,19 @@ class MyForm(QMainWindow):
         if self.currep + self.halfneps < self.maxep:
             fp = int(max([0,((self.currep * self.epochl) - (self.tracedur/2))*self.sr]))
         else:
-            fp = int(numpy.floor((self.maxep-self.neps)*self.epochl*self.sr))
-        lp = int(numpy.floor(fp + self.tracedur * self.sr))
+            fp = int(np.floor((self.maxep-self.neps)*self.epochl*self.sr))
+        lp = int(np.floor(fp + self.tracedur * self.sr))
         sch=0 #assuming first chan is EEG
-        self.maxEEG=numpy.max(self.edfmat[sch, fp:lp])
+        self.maxEEG=np.max(self.edfmat[sch, fp:lp])
     def update_fixEMG(self):
         self.fixedEMG = self.ui.checkBox_4.isChecked()
         if self.currep + self.halfneps < self.maxep:
             fp = int(max([0,((self.currep * self.epochl) - (self.tracedur/2))*self.sr]))
         else:
-            fp = int(numpy.floor((self.maxep-self.neps)*self.epochl*self.sr))
-        lp = int(numpy.floor(fp + self.tracedur * self.sr))
+            fp = int(np.floor((self.maxep-self.neps)*self.epochl*self.sr))
+        lp = int(np.floor(fp + self.tracedur * self.sr))
         sch=1 #assuming ch1 is EMG
-        self.maxEMG=numpy.max(self.edfmat[sch, fp:lp])**2
+        self.maxEMG=np.max(self.edfmat[sch, fp:lp])**2
 
     def update_fixFFT(self):
         self.fixedFFT=self.ui.checkBox_6.isChecked()
@@ -239,7 +240,7 @@ class MyForm(QMainWindow):
                 fft2pl = self.fftmat[self.maxep - self.neps:self.maxep, :].flatten()
         else:
             fft2pl = self.fftmat[0:2 * self.halfneps, :].flatten()
-        self.maxFFT=numpy.max(fft2pl)
+        self.maxFFT=np.max(fft2pl)
 
     def update_useZT(self):
         self.useZT = self.ui.checkBox_5.isChecked()
@@ -287,13 +288,13 @@ class MyForm(QMainWindow):
                 try: 
                     f = sio.loadmat(self.scorefile)
                     for k, v in f.items():
-                        arrays[k] = numpy.array(v)
+                        arrays[k] = np.array(v)
                     m = arrays['zt0'].flatten()
                     self.scoredict['zt0'] = m[0]
                 except NotImplementedError:    
                     f = h5py.File(self.scorefile)
                     for k, v in f.items():
-                        arrays[k] = numpy.array(v)
+                        arrays[k] = np.array(v)
                     m = arrays['zt0'].flatten()
                     self.scoredict['zt0'] = ''.join([str(chr(c)) for c in m])
                     # if 't0' in arrays.keys():
@@ -308,7 +309,7 @@ class MyForm(QMainWindow):
                 print(len(self.scoredict['score']))
                 print(len(self.score))
                 for i,s in enumerate(self.scoredict['score']):
-                    if not numpy.isnan(s):
+                    if not np.isnan(s):
                         self.score[i]=s
             else:
                 if len(self.scorefile) >= 1:
@@ -396,10 +397,10 @@ class MyForm(QMainWindow):
             #        self.timesscore.append(self.timesscore[i-1]+float(self.epochl))
 
             #print(len(self.timesscore))
-            #taxis = #time of each epoch//(numpy.arange(len(self.score))) * self.epochl
+            #taxis = #time of each epoch//(np.arange(len(self.score))) * self.epochl
             #plotsc.plot(self.timesscore, self.score)
             #also plotting in the traces window (requires sync)
-            #taxis = (numpy.arange(self.nframes)) / self.sr
+            #taxis = (np.arange(self.nframes)) / self.sr
             #plotCanv = self.ui.PlotWidget_tr
             #ampFactor = self.sr * self.epochl
             #hrscoring = ampfun(self.score, ampFactor)
@@ -443,12 +444,12 @@ class MyForm(QMainWindow):
         if self.currep + self.halfneps < self.maxep:
             fp = int(max([0,((self.currep * self.epochl) - (self.tracedur/2))*self.sr]))
         else:
-            fp = int(numpy.floor((self.maxep-self.neps)*self.epochl*self.sr))
+            fp = int(np.floor((self.maxep-self.neps)*self.epochl*self.sr))
         #lp = min([self.totalp-1,int(fp + self.tracedur*self.sr)-1])
-        lp = int(numpy.floor(fp + self.tracedur * self.sr))
+        lp = int(np.floor(fp + self.tracedur * self.sr))
         #beginnning of each epoch:
         indxtep = self.t0[list(range(fp,lp,int(self.epochl * self.sr)))]
-        indxeps = numpy.round(indxtep/self.epochl).astype(int)
+        indxeps = np.round(indxtep/self.epochl).astype(int)
         #print(indxeps)
         #print(fp,lp,self.selchan2p)
         c = 'kbrkbrkbrkbr'
@@ -462,7 +463,7 @@ class MyForm(QMainWindow):
         if self.ui.checkBox_3.isChecked():
             ylim = self.maxEEG
         else:
-            ylim = numpy.max(self.edfmat[sch, fp:lp])
+            ylim = np.max(self.edfmat[sch, fp:lp])
         plotCanv.setYRange(-ylim, ylim, padding=0)
         midp = indxtep[len(indxtep)//2]
         for i,x in enumerate(indxtep):
@@ -497,7 +498,7 @@ class MyForm(QMainWindow):
         if self.ui.checkBox_4.isChecked():
             ylim = self.maxEMG
         else:
-            ylim = numpy.max(mt2p)
+            ylim = np.max(mt2p)
         plotCanvMT.setYRange(0, ylim, padding=0)
         for x in indxtep:
             plotCanvMT.plot([x,x], [0,ylim], pen='k')
@@ -515,13 +516,13 @@ class MyForm(QMainWindow):
 
         #print(type(fft2pl))
         #print(len(fft2pl),len(faxis))
-        indx=numpy.arange(len(fft2pl))
+        indx=np.arange(len(fft2pl))
         self.pfft = plotCanvFFT.plot(indx, fft2pl,  fillLevel=0, brush=(50,50,200,100))
         plotCanvFFT.setXRange(indx[0],indx[-1], padding=0)
         if self.ui.checkBox_6.isChecked():
             ylim = self.maxFFT
         else:
-            ylim = numpy.max(fft2pl)
+            ylim = np.max(fft2pl)
         plotCanvFFT.setYRange(0, ylim, padding=0)
         indxb1 = indx[self.faxis == list(self.freqs)[0]]
         for item in self.fftl:
@@ -567,24 +568,24 @@ class MyForm(QMainWindow):
             self.maxep = int(edf.times[-1]//self.epochl)
             print('Max eps:',self.maxep)
             self.tracel = self.ui.epoch_length_2.value()
-            self.edfmat = numpy.asarray(edf.get_data())
+            self.edfmat = np.asarray(edf.get_data())
             npep = int(self.epochl * self.sr)
             leeg= len(self.edfmat[0,:])
             print("Calculating FFT from channel",self.ui.EEGch.value())
             print("last EEG point:",npep * (leeg//npep))
             #self.edfmat[sch, fp:lp], pen=c[p])
             self.eegmat = self.edfmat[self.ui.EEGch.value()-1,0:npep * (leeg//npep)].reshape(leeg//npep,npep)
-            print(numpy.shape(self.eegmat))
-            self.fftmat = numpy.zeros(numpy.shape(self.eegmat))
-            self.freqs = numpy.fft.fftfreq(npep, 1/self.sr)
-            self.score= -1* numpy.ones(self.maxep)
+            print(np.shape(self.eegmat))
+            self.fftmat = np.zeros(np.shape(self.eegmat))
+            self.freqs = np.fft.fftfreq(npep, 1/self.sr)
+            self.score= -1* np.ones(self.maxep)
             for epoch in range(leeg//npep):
-                self.fftmat[epoch,:] = numpy.abs(numpy.fft.fft(self.eegmat[epoch,:]))**2
+                self.fftmat[epoch,:] = np.abs(np.fft.fft(self.eegmat[epoch,:]))**2
                 #We only one the freqs between 0 and the max freq FFT
 
             #now finding the pos of the 0 and maxfrec
-            pos0 = numpy.argmin(numpy.abs(self.freqs))
-            posmax = numpy.argmin(numpy.abs(self.freqs - self.ui.maxF.value()))
+            pos0 = np.argmin(np.abs(self.freqs))
+            posmax = np.argmin(np.abs(self.freqs - self.ui.maxF.value()))
             self.fftmat = self.fftmat[:,pos0:posmax]
             self.freqs = self.freqs[pos0:posmax]
             self.neps = self.tracel // self.epochl #epochs per page
@@ -622,13 +623,13 @@ class MyForm(QMainWindow):
         faxis = list(self.freqs) * (2 * self.halfneps)
         # print(type(fft2pl))
         # print(len(fft2pl),len(faxis))
-        indx = numpy.arange(len(fft2pl))
+        indx = np.arange(len(fft2pl))
         self.pfft = plotCanvFFT.plot(indx, fft2pl, fillLevel=0, brush=(50, 50, 200, 100))
         plotCanvFFT.setXRange(indx[0], indx[-1], padding=0)
         if self.ui.checkBox_6.isChecked():
             ylim = self.maxFFT
         else:
-            ylim = numpy.max(fft2pl)
+            ylim = np.max(fft2pl)
         plotCanvFFT.setYRange(0, ylim, padding=0)
         indxb1 = indx[faxis == list(self.freqs)[0]]
         for x in indxb1:
@@ -758,7 +759,7 @@ class MyForm(QMainWindow):
         ax = plt.subplot(grid[1, 0:])
         #now plotting hypnogram and traces
         tscore =[t*self.epochl for t in range(len(self.chunk_score))]
-        taxis = (numpy.arange(self.nframes)) / self.sr
+        taxis = (np.arange(self.nframes)) / self.sr
         plt.plot(tscore[3:], self.chunk_score[3:]*4.5)
         indxt = list(range(self.Ncells))
         random.shuffle(indxt)
@@ -866,7 +867,7 @@ class MyForm(QMainWindow):
             self.update_currep()
         #jumps to next non scored epoch
         if event.key() == Qt.Key.Key_N.value:
-            lnz = numpy.where(self.score[self.currep:] < 0)[0][0]+self.currep
+            lnz = np.where(self.score[self.currep:] < 0)[0][0]+self.currep
             self.currep = lnz
             self.ui.lineEdit.setText(str(int(min([self.currep - 1, self.maxep - 1]))))
             self.update_currep()
@@ -874,26 +875,26 @@ class MyForm(QMainWindow):
         if event.key() == Qt.Key.Key_Q.value:
             c1=self.score[self.currep:] > 0.9
             c2=self.score[self.currep:] < 1.9
-            self.currep = numpy.argwhere(c1 & c2)[0]+self.currep
+            self.currep = np.argwhere(c1 & c2)[0]+self.currep
             self.ui.lineEdit.setText(str(int(self.currep)))
             self.update_currep()
         if event.key() == Qt.Key.Key_R.value:
             c1 = self.score[self.currep:] > 1.9
             c2 = self.score[self.currep:] < 2.9
-            self.currep = numpy.argwhere(c1 & c2)[0] + self.currep
+            self.currep = np.argwhere(c1 & c2)[0] + self.currep
             self.ui.lineEdit.setText(str(int(self.currep)))
             self.update_currep()
         if event.key() == Qt.Key.Key_W.value:
             c1 = self.score[self.currep:] >=0
             c2 = self.score[self.currep:] < 1
-            self.currep = numpy.argwhere(c1 & c2)[0] + self.currep
+            self.currep = np.argwhere(c1 & c2)[0] + self.currep
             self.ui.lineEdit.setText(str(int(self.currep)))
             self.ui.lineEdit.setText(str(int(self.currep)))
             self.update_currep()
         if event.key() == Qt.Key.Key_U.value:
             c1 = self.score[self.currep:] <0
             c2 = self.score[self.currep:] > 3
-            self.currep = numpy.argwhere(c1 | c2)[0] + self.currep
+            self.currep = np.argwhere(c1 | c2)[0] + self.currep
             self.ui.lineEdit.setText(str(int(self.currep)))
             self.ui.lineEdit.setText(str(int(self.currep)))
             self.update_currep()
