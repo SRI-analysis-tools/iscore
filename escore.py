@@ -92,6 +92,7 @@ class MyForm(QMainWindow):
         self.ui.listWidget.itemSelectionChanged.connect(self.update_selchan)
         self.ui.lineEdit_2.editingFinished.connect(self.update_maxEEG)
         self.ui.lineEdit_3.editingFinished.connect(self.update_maxEMG)
+        self.ui.EMGch.valueChanged.connect(self.update_emg)
         self.ui.listWidget_2.itemSelectionChanged.connect(self.update_emg)
         self.ui.listWidget_3.itemSelectionChanged.connect(self.update_timescale)
         self.show()
@@ -132,7 +133,7 @@ class MyForm(QMainWindow):
         return None
 
     def update_epl(self):
-        self.ui.label_11.setText("Recalculating...")
+        self.ui.label_13.setText("Recalculating...")
         self.epochl = self.ui.epoch_length.value()
         self.maxep = int(self.edf.times[-1] // self.epochl)
         self.tracel = self.ui.epoch_length_2.value()
@@ -203,15 +204,25 @@ class MyForm(QMainWindow):
         ax = plotCanvFFT.getAxis('left')
         ax.setTicks([])
         plotCanvFFT.setMouseEnabled(x=False, y=False)
-        self.ui.label_11.setText("Ready")
+        self.ui.label_13.setText("Ready")
+        
 
     def closeap(self):
         self.close()
     def update_ZT0(self):
         pass
     def update_emg(self):
+        #called upon change on list
         item = self.ui.listWidget_2.currentItem()
         self.emgtype = self.ui.listWidget_2.row(item)
+        
+        if self.emgtype == 2:
+            self.emg = scipy.signal.medfilt(self.edfmat[self.ui.EMGch.value()-1, :] ,5)
+        if self.emgtype == 0:
+            self.emg = self.edfmat[self.ui.EMGch.value()-1, :]
+        if self.emgtype == 1:
+            self.emg = self.edfmat[self.ui.EMGch.value()-1, :] **2
+            
     def update_fixEEG(self):
         self.fixedEEG = self.ui.checkBox_3.isChecked()
         if self.currep + self.halfneps < self.maxep:
@@ -219,8 +230,9 @@ class MyForm(QMainWindow):
         else:
             fp = int(np.floor((self.maxep-self.neps)*self.epochl*self.sr))
         lp = int(np.floor(fp + self.tracedur * self.sr))
-        sch=0 #assuming first chan is EEG
+        sch=self.ui.EEGch.value()-1 #assuming first chan is EEG
         self.maxEEG=np.max(self.edfmat[sch, fp:lp])
+
     def update_fixEMG(self):
         self.fixedEMG = self.ui.checkBox_4.isChecked()
         if self.currep + self.halfneps < self.maxep:
@@ -228,8 +240,7 @@ class MyForm(QMainWindow):
         else:
             fp = int(np.floor((self.maxep-self.neps)*self.epochl*self.sr))
         lp = int(np.floor(fp + self.tracedur * self.sr))
-        sch=1 #assuming ch1 is EMG
-        self.maxEMG=np.max(self.edfmat[sch, fp:lp])**2
+        self.maxEMG=np.max(self.emg[fp:lp])
 
     def update_fixFFT(self):
         self.fixedFFT=self.ui.checkBox_6.isChecked()
@@ -414,7 +425,34 @@ class MyForm(QMainWindow):
     def rescore(self):
         return None
     def stats(self):
-        #print mean delta power across the whole recording
+        #Displays mean fft per state ,mean BD, % time in each state and save csv file with score and power every 2 Hz
+        indw = np.where(self.score==0)
+        indnr = np.where(self.score==1)
+        indr = np.where(self.score==2)
+        plt.figure()
+        if len(indw)>0:
+            indw = indw[0]
+            fftw = np.mean(self.fftmat[indw,:],axis=0)
+            plt.plot(self.freqs,fftw,'k-',label='W')
+        else:
+            indw=[]
+        if len(indnr)>0:
+            indnr = indnr[0]
+            fftnr = np.mean(self.fftmat[indnr,:],axis=0)
+            plt.plot(self.freqs,fftnr,'b-',label='NR')
+        else:
+            indnr=[]
+        if len(indr)>0:
+            indr = indr[0]
+            fftr = np.mean(self.fftmat[indr,:],axis=0)
+            plt.plot(self.freqs,fftr,'r-',label='REM')
+        else:
+            indnr=[]
+        plt.ylabel(' FFT ($V^2$)',fontsize=15)
+        plt.xlabel('Frequency (Hz)',fontsize=15)
+        plt.title('Power spectrum by state',fontsize=18)
+        plt.legend()
+        plt.show()
 
         return None
     def undo(self):
@@ -435,7 +473,7 @@ class MyForm(QMainWindow):
         histCanv = self.ui.PlotWidget_hypnogram
         histCanv.removeItem(self.scplt)
         histCanv.removeItem(self.hypcrsr)
-        self.scplt = histCanv.plot(self.score)
+        self.scplt = histCanv.plot(self.score,pen='k')
         histCanv.setYRange(-1.1, 2.2, padding=0)
         histCanv.setXRange(0, len(self.score), padding=0)
         self.hypcrsr = histCanv.plot([self.currep, self.currep], [-1, 2], pen='r')
@@ -456,23 +494,24 @@ class MyForm(QMainWindow):
         p = 0
         plotCanv = self.ui.PlotWidget_signals
         plotCanv.clear()
-        for sch in self.selchan2p:
-            plotCanv.plot(self.t0[fp:lp], self.edfmat[sch, fp:lp],  pen=c[p])
-            p += 1
-        plotCanv.setXRange(self.t0[fp],self.t0[lp], padding=0)
-        if self.ui.checkBox_3.isChecked():
-            ylim = self.maxEEG
-        else:
-            ylim = np.max(self.edfmat[sch, fp:lp])
-        plotCanv.setYRange(-ylim, ylim, padding=0)
-        midp = indxtep[len(indxtep)//2]
-        for i,x in enumerate(indxtep):
-            plotCanv.plot([x,x], [-ylim,ylim], pen='g')
-            if indxeps[i] < self.maxep:
-                text = TextItem(getsc(self.score[indxeps[i]],self.dictsc),color=(100, 200, 0))
-                plotCanv.addItem(text)
-                text.setPos(x+1,0.98*ylim)
-                text.setFont(self.font)
+        if len(self.selchan2p)>0:
+            for sch in self.selchan2p:
+                plotCanv.plot(self.t0[fp:lp], self.edfmat[sch, fp:lp],  pen=c[p])
+                p += 1
+            plotCanv.setXRange(self.t0[fp],self.t0[lp], padding=0)
+            if self.ui.checkBox_3.isChecked():
+                ylim = self.maxEEG
+            else:
+                ylim = np.max(self.edfmat[self.selchan2p[0], fp:lp])
+            plotCanv.setYRange(-ylim, ylim, padding=0)
+            midp = indxtep[len(indxtep)//2]
+            for i,x in enumerate(indxtep):
+                plotCanv.plot([x,x], [-ylim,ylim], pen='g')
+                if indxeps[i] < self.maxep:
+                    text = TextItem(getsc(self.score[indxeps[i]],self.dictsc),color=(100, 200, 0))
+                    plotCanv.addItem(text)
+                    text.setPos(x+1,0.98*ylim)
+                    text.setFont(self.font)
             #if x == midp:
             #plotCanv.plot([x,x,x+self.epochl,x+self.epochl], [-ylim,ylim,ylim,-ylim], fillLevel=-1, brush=(150, 50, 200, 15))
         x = self.t0[int(self.t * self.sr)]
@@ -488,11 +527,14 @@ class MyForm(QMainWindow):
         plotCanvMT.clear()
         ax = plotCanvMT.getAxis('left')
         ax.setTicks([])
-        mt2p = self.edfmat[self.ui.EMGch.value()-1, fp:lp]
-        if self.ui.listWidget_2.currentRow() == 1:
-            mt2p = mt2p **2
-        if self.ui.listWidget_2.currentRow() == 2:
-            mt2p = scipy.signal.medfilt(mt2p,5)
+        mt2p = self.emg[fp:lp]
+        
+
+        # if self.ui.listWidget_2.currentRow() == 1:
+        #     mt2p = mt2p **2
+
+        # if self.ui.listWidget_2.currentRow() == 2:
+        #     mt2p = scipy.signal.medfilt(mt2p,5)
         plotCanvMT.plot(self.t0[fp:lp], mt2p, pen='k')
         plotCanvMT.setXRange(self.t0[fp], self.t0[lp], padding=0)
         if self.ui.checkBox_4.isChecked():
@@ -542,7 +584,7 @@ class MyForm(QMainWindow):
             self.fn=fileName.split('/')[-1]
             os.chdir(fileName.rsplit('/',1)[0])
             self.ui.label_5.setText(fileName)
-            self.ui.label_11.setText("Reading EDF...")
+            self.ui.label_13.setText("Reading EDF...")
             edf = mne.io.read_raw_edf(fileName, preload=True, stim_channel=None)
             self.edf = edf
             self.sr = float(edf.info["sfreq"])
@@ -579,6 +621,7 @@ class MyForm(QMainWindow):
             self.fftmat = np.zeros(np.shape(self.eegmat))
             self.freqs = np.fft.fftfreq(npep, 1/self.sr)
             self.score= -1* np.ones(self.maxep)
+            self.emg = self.edfmat[self.ui.EMGch.value()-1, :]
             for epoch in range(leeg//npep):
                 self.fftmat[epoch,:] = np.abs(np.fft.fft(self.eegmat[epoch,:]))**2
                 #We only one the freqs between 0 and the max freq FFT
@@ -646,7 +689,7 @@ class MyForm(QMainWindow):
         ax = plotCanvFFT.getAxis('left')
         ax.setTicks([])
         plotCanvFFT.setMouseEnabled(x=False, y=False)
-        self.ui.label_11.setText("Ready")
+        self.ui.label_13.setText("Ready")
         self.scoredict = {'score': self.score, 'zt0': self.ui.timeEdit_3.time(), 't0': self.ui.dateTimeEdit_2.dateTime(), 'el': 4}
 
     def saveAll(self): #this is from ca imager
