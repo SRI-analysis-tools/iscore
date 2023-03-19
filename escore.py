@@ -1,15 +1,8 @@
 import sys, os
 import numpy as np
-#os.environ['QT_AUTO_SCREEN_SCALE_FACTOR'] = '1'
 from PyQt6.QtWidgets import QMainWindow, QApplication, QFileDialog, QGraphicsScene, QGraphicsPixmapItem
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-# import sys
-# from PyQt5 import QtWidgets, QtCore, QtGui #pyqt stuff
-# QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling, True) #enable highdpi scaling
-# QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps, True) #use highdpi icons
-
-
 
 import time
 import pickle
@@ -53,8 +46,59 @@ def getsc(x,d):
         return(d[x])
     else:
         return 'U'
-#core classes
+    
+def getbouts(score,st):
+    #Given score and state st, returns list with the duration of each bout
+    index2 = np.where(np.round(score) == st)
+    boutdur = []
+    if len(index2)>0:
+        index2 = index2[0]
+        dindex = np.diff(index2)
+        #EVery time the diff is not 1, we start counting the bd of a new bout
+        nbout = 1
+        pos_index = 0
+        while pos_index < len(dindex):
+            if dindex[pos_index]==1:
+                nbout+=1
+                #Add case for last bout
+                if pos_index == len(dindex)-1:
+                    boutdur.append(nbout)
+            else:
+                boutdur.append(nbout)
+                nbout=1
+                #Add case for last bout of only 1 epoch
+                if pos_index == len(dindex)-1:
+                    boutdur.append(nbout)
+            pos_index+=1
+    return np.array(boutdur)
+                
+def getbd(score,minbd=3, epochd=4):
+    #mean bout duration in min of W,NR and REM
+    #score is numeric where 0=W, 1=NR and 2 =R
+    w = getbouts(score,0)
+    nr = getbouts(score,1)
+    r = getbouts(score,2)
+    w = w[w>=minbd]
+    nr = nr[nr>=minbd]
+    r = r[r>=minbd]
+    return np.mean(w)*epochd/60,np.mean(nr)*epochd/60,np.mean(r)*epochd/60
+    
+def getptime(score):
+    #Returns the percentage of time in each state
+    indw = np.where(np.round(score) == 0)
+    if len(indw)>0:
+        indw=indw[0]
+    indnr = np.where(np.round(score) == 1)
+    if len(indnr)>0:
+        indnr=indnr[0]
+    indr = np.where(np.round(score) == 2)
+    if len(indr)>0:
+        indr=indr[0]
+    neps=len(score)
+    return len(indw)/neps,len(indnr)/neps,len(indr)/neps
 
+#core classes
+getbd([2,3,4])
 class MyForm(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -146,7 +190,7 @@ class MyForm(QMainWindow):
         self.freqs = np.fft.fftfreq(npep, 1 / self.sr)
         self.score = -1 * np.ones(self.maxep)
         for epoch in range(leeg // npep):
-            self.fftmat[epoch, :] = np.abs(np.fft.fft(self.eegmat[epoch, :])) ** 2
+            self.fftmat[epoch, :] = np.abs(np.fft.fft(self.eegmat[epoch, :]))
             # We only one the freqs between 0 and the max freq FFT
 
         # now finding the pos of the 0 and maxfrec
@@ -268,7 +312,8 @@ class MyForm(QMainWindow):
         pass
     def update_selchan(self):
         self.selchan2p= [self.ui.listWidget.row(item) for item in self.ui.listWidget.selectedItems()]
-        self.update_plots()
+        if len(self.selchan2p)>0:
+            self.update_plots()
     def update_epocht(self):
         self.t = self.epochl * self.currep
         #newdt = time.gmtime(time.mktime(self.tstart) + self.t)
@@ -419,6 +464,12 @@ class MyForm(QMainWindow):
     def loadtextScore(self):
         return None
     def autoScore(self):
+        #Compute featues in 2s epochs: RMS of EEG and EMG and EEG power in 2 Hz bins
+        #Use gamma and EMG to identify clear sleep and wake epochs
+        #Trains XGBoost on easy cases and scores the rest
+        #Identifies wake artifacts as high EMG, high Delta
+        #Converts 2s score into 4s score adding artifact epochs
+        #bands:0-4, 6-10, 125-135, 285-295
         return None
     def evaluateScore(self):
         return None
@@ -432,26 +483,63 @@ class MyForm(QMainWindow):
         plt.figure()
         if len(indw)>0:
             indw = indw[0]
-            fftw = np.mean(self.fftmat[indw,:],axis=0)
-            plt.plot(self.freqs,fftw,'k-',label='W')
+            fftw = np.mean(self.fftstats[indw,:],axis=0)
+            plt.plot(self.freqstats,np.log(fftw),'g-',label='W')
         else:
             indw=[]
         if len(indnr)>0:
             indnr = indnr[0]
-            fftnr = np.mean(self.fftmat[indnr,:],axis=0)
-            plt.plot(self.freqs,fftnr,'b-',label='NR')
+            fftnr = np.mean(self.fftstats[indnr,:],axis=0)
+            plt.plot(self.freqstats,np.log(fftnr),'b-',label='NR')
         else:
             indnr=[]
         if len(indr)>0:
             indr = indr[0]
-            fftr = np.mean(self.fftmat[indr,:],axis=0)
-            plt.plot(self.freqs,fftr,'r-',label='REM')
+            fftr = np.mean(self.fftstats[indr,:],axis=0)
+            plt.plot(self.freqstats,np.log(fftr),'r-',label='REM')
         else:
             indnr=[]
+        plt.ylabel('Log(|FFT|) (Log $V^2$)',fontsize=15)
+        plt.xlabel('Frequency (Hz)',fontsize=15)
+        plt.title('Power spectrum by state',fontsize=18)
+        plt.legend()
+        plt.show()
+        #Plot again for selected freqs in linear scale
+        plt.figure(figsize=(12,9))
+        plt.subplot(2,1,1)
+        if len(indw)>0:
+            fftw = np.mean(self.fftmat[indw,:],axis=0)
+            plt.plot(self.freqs,fftw,'#50C878',label='W')
+        if len(indnr)>0:
+            fftnr = np.mean(self.fftmat[indnr,:],axis=0)
+            plt.plot(self.freqs,fftnr,'#4169E1',label='NR')
+        if len(indr)>0:
+            fftr = np.mean(self.fftmat[indr,:],axis=0)
+            plt.plot(self.freqs,fftr,'#FF6347',label='REM')
         plt.ylabel(' FFT ($V^2$)',fontsize=15)
         plt.xlabel('Frequency (Hz)',fontsize=15)
         plt.title('Power spectrum by state',fontsize=18)
         plt.legend()
+        #now BD and PT
+        bd = getbd(self.score)
+        pt = getptime(self.score)
+        plt.subplot(2,2,3)
+        x_labels = ['WAKE', 'NREM', 'REM']
+        #colors=['green', 'blue', 'red']
+        colors = ['#50C878', '#4169E1', '#FF6347']
+        plt.bar(x_labels, bd, color=colors)
+        ax2 = plt.gca()
+        ax2.spines['top'].set_visible(False)
+        ax2.spines['right'].set_visible(False)
+        ax2.spines['left'].set_visible(False)
+        ax2.spines['bottom'].set_visible(False)
+        plt.title('Mean bout duration',fontsize=19)
+        plt.ylabel('Duration (Min)',fontsize=15)
+        plt.subplot(2,2,4)
+        x_labels = ['WAKE', 'NREM', 'REM']
+        plt.pie(pt,labels=x_labels,colors=colors, autopct='%1.1f%%')
+        plt.title('Percentage of time',fontsize=19)
+        plt.tight_layout()
         plt.show()
 
         return None
@@ -623,12 +711,15 @@ class MyForm(QMainWindow):
             self.score= -1* np.ones(self.maxep)
             self.emg = self.edfmat[self.ui.EMGch.value()-1, :]
             for epoch in range(leeg//npep):
-                self.fftmat[epoch,:] = np.abs(np.fft.fft(self.eegmat[epoch,:]))**2
+                self.fftmat[epoch,:] = np.abs(np.fft.fft(self.eegmat[epoch,:]))
                 #We only one the freqs between 0 and the max freq FFT
 
             #now finding the pos of the 0 and maxfrec
             pos0 = np.argmin(np.abs(self.freqs))
             posmax = np.argmin(np.abs(self.freqs - self.ui.maxF.value()))
+            posp = np.where(self.freqs>=0)[0]
+            self.fftstats = self.fftmat[:,posp].copy()
+            self.freqstats = self.freqs[posp].copy()
             self.fftmat = self.fftmat[:,pos0:posmax]
             self.freqs = self.freqs[pos0:posmax]
             self.neps = self.tracel // self.epochl #epochs per page
@@ -692,135 +783,135 @@ class MyForm(QMainWindow):
         self.ui.label_13.setText("Ready")
         self.scoredict = {'score': self.score, 'zt0': self.ui.timeEdit_3.time(), 't0': self.ui.dateTimeEdit_2.dateTime(), 'el': 4}
 
-    def saveAll(self): #this is from ca imager
-        #making data frame with the Z scores of ever cell for every state, assuming 1 period
-        #For each cell we need a table with the Zscore of an epoch and it's state
-        mat_aux=[]
-        k0=1
-        lstate = ['Wake'] * len(self.activityW[1, :]) + ['NREM'] * len(self.activityN[1, :]) + ['REM'] * len(
-            self.activityR[1, :])
-        #there can be statistical differences due to larger than the rest or smaller than the rest activity
-        wakeL =[]
-        nremL = []
-        remL = []
-        wakeS = []
-        nremS = []
-        remS = []
-        indep = []
-        faL=[]
-        oaL=[]
-        faS=[]
+    # def saveAll(self): #this is from ca imager
+    #     #making data frame with the Z scores of ever cell for every state, assuming 1 period
+    #     #For each cell we need a table with the Zscore of an epoch and it's state
+    #     mat_aux=[]
+    #     k0=1
+    #     lstate = ['Wake'] * len(self.activityW[1, :]) + ['NREM'] * len(self.activityN[1, :]) + ['REM'] * len(
+    #         self.activityR[1, :])
+    #     #there can be statistical differences due to larger than the rest or smaller than the rest activity
+    #     wakeL =[]
+    #     nremL = []
+    #     remL = []
+    #     wakeS = []
+    #     nremS = []
+    #     remS = []
+    #     indep = []
+    #     faL=[]
+    #     oaL=[]
+    #     faS=[]
 
-        lfwa1 = int(len(self.fwa)/2)
-        lowa1 = int(len(self.owa)/2)
-        for n in range(self.Ncells):
-            lact=list(self.activityW[n,:]) + list(self.activityN[n,:])+list(self.activityR[n,:])
+    #     lfwa1 = int(len(self.fwa)/2)
+    #     lowa1 = int(len(self.owa)/2)
+    #     for n in range(self.Ncells):
+    #         lact=list(self.activityW[n,:]) + list(self.activityN[n,:])+list(self.activityR[n,:])
 
-            #lstate = ('WAKE ' * len(self.activityW)).split()+ ('NREM ' * len(self.activityN)).split() + ('REM ' * len(self.activityR)).split()
-            F, p = stats.f_oneway(self.activityW[n,:],self.activityN[n,:],self.activityR[n,:])
-            #print(self.activityW[n,:].mean(),self.activityN[n,:].mean(),self.activityR[n,:].mean())
-            if p<0.05:
-                print("Significant! N=",k0)
-                k0+=1
-                if (self.activityW[n,:].mean()>self.activityN[n,:].mean()) and (self.activityW[n,:].mean()>self.activityR[n,:].mean()):
-                    wakeL.append(n)
-                elif (self.activityW[n,:].mean()<self.activityN[n,:].mean()) and (self.activityW[n,:].mean()<self.activityR[n,:].mean()):
-                    wakeS.append(n)
-                elif (self.activityN[n,:].mean()<self.activityW[n,:].mean()) and (self.activityN[n,:].mean()<self.activityR[n,:].mean()):
-                    nremS.append(n)
-                elif (self.activityN[n,:].mean()>self.activityW[n,:].mean()) and (self.activityN[n,:].mean()>self.activityR[n,:].mean()):
-                    nremL.append(n)
-                elif (self.activityR[n,:].mean()<self.activityW[n,:].mean()) and (self.activityR[n,:].mean()<self.activityN[n,:].mean()):
-                    remS.append(n)
-                elif (self.activityR[n,:].mean()>self.activityW[n,:].mean()) and (self.activityR[n,:].mean()>self.activityN[n,:].mean()):
-                    remL.append(n)
-            else:
-                indep.append(n)
-            F, p1 = stats.f_oneway(self.fwa[n,0:lfwa1],self.owa[n,0:lowa1]) # Checking only the first half ogf the data
-            F, p2 = stats.f_oneway(self.fwa[n, lfwa1:],
-                                   self.owa[n, lowa1:])  # Checking only the second half ogf the data
-            if (p1<0.05) and (p2<0.05):
-                if (self.fwa[n,0:lfwa1].mean()>self.owa[n,0:lowa1].mean()) and (self.fwa[n,lfwa1:].mean()>self.owa[n,lowa1:].mean()):
-                    faL.append(n) #saves the number of the cell that has higher activity at the onset of W
-                else:
-                    faS.append(n)
-            else:
-                oaL.append(n)
-        print("percentage of active cells at onset: ",100*len(faL)/self.Ncells)
-        print("percentage of less active cells at onset: ", 100 * len(faS) / self.Ncells)
-        print("percentage of cells indifferent to onset: ", 100 * len(oaL) / self.Ncells)
-        mixed = wakeS +nremS +remS
-        if len(wakeL +nremL +remL +mixed +indep ) != self.Ncells:
-            print("missing cells!!")
-        #Making final figure with traces and hypnogram, jellybeans and pie chart
-        labels =[]
-        sizes =[]
-        explode = []
-        colors =[]
-        colorlist = 'g', 'r', 'b', (0.5,0.5,0.5), 'y'
-        labellist = 'W', 'R', 'NR', 'Mixed', 'Ind'
-        i=0
-        for m in [wakeL,remL, nremL, mixed,indep]:
-            if len(m)>0:
-                labels.append(labellist[i])
-                sizes.append(100*len(m)/self.Ncells)
-                explode.append(0)
-                colors.append(colorlist[i])
-            i+=1
+    #         #lstate = ('WAKE ' * len(self.activityW)).split()+ ('NREM ' * len(self.activityN)).split() + ('REM ' * len(self.activityR)).split()
+    #         F, p = stats.f_oneway(self.activityW[n,:],self.activityN[n,:],self.activityR[n,:])
+    #         #print(self.activityW[n,:].mean(),self.activityN[n,:].mean(),self.activityR[n,:].mean())
+    #         if p<0.05:
+    #             print("Significant! N=",k0)
+    #             k0+=1
+    #             if (self.activityW[n,:].mean()>self.activityN[n,:].mean()) and (self.activityW[n,:].mean()>self.activityR[n,:].mean()):
+    #                 wakeL.append(n)
+    #             elif (self.activityW[n,:].mean()<self.activityN[n,:].mean()) and (self.activityW[n,:].mean()<self.activityR[n,:].mean()):
+    #                 wakeS.append(n)
+    #             elif (self.activityN[n,:].mean()<self.activityW[n,:].mean()) and (self.activityN[n,:].mean()<self.activityR[n,:].mean()):
+    #                 nremS.append(n)
+    #             elif (self.activityN[n,:].mean()>self.activityW[n,:].mean()) and (self.activityN[n,:].mean()>self.activityR[n,:].mean()):
+    #                 nremL.append(n)
+    #             elif (self.activityR[n,:].mean()<self.activityW[n,:].mean()) and (self.activityR[n,:].mean()<self.activityN[n,:].mean()):
+    #                 remS.append(n)
+    #             elif (self.activityR[n,:].mean()>self.activityW[n,:].mean()) and (self.activityR[n,:].mean()>self.activityN[n,:].mean()):
+    #                 remL.append(n)
+    #         else:
+    #             indep.append(n)
+    #         F, p1 = stats.f_oneway(self.fwa[n,0:lfwa1],self.owa[n,0:lowa1]) # Checking only the first half ogf the data
+    #         F, p2 = stats.f_oneway(self.fwa[n, lfwa1:],
+    #                                self.owa[n, lowa1:])  # Checking only the second half ogf the data
+    #         if (p1<0.05) and (p2<0.05):
+    #             if (self.fwa[n,0:lfwa1].mean()>self.owa[n,0:lowa1].mean()) and (self.fwa[n,lfwa1:].mean()>self.owa[n,lowa1:].mean()):
+    #                 faL.append(n) #saves the number of the cell that has higher activity at the onset of W
+    #             else:
+    #                 faS.append(n)
+    #         else:
+    #             oaL.append(n)
+    #     print("percentage of active cells at onset: ",100*len(faL)/self.Ncells)
+    #     print("percentage of less active cells at onset: ", 100 * len(faS) / self.Ncells)
+    #     print("percentage of cells indifferent to onset: ", 100 * len(oaL) / self.Ncells)
+    #     mixed = wakeS +nremS +remS
+    #     if len(wakeL +nremL +remL +mixed +indep ) != self.Ncells:
+    #         print("missing cells!!")
+    #     #Making final figure with traces and hypnogram, jellybeans and pie chart
+    #     labels =[]
+    #     sizes =[]
+    #     explode = []
+    #     colors =[]
+    #     colorlist = 'g', 'r', 'b', (0.5,0.5,0.5), 'y'
+    #     labellist = 'W', 'R', 'NR', 'Mixed', 'Ind'
+    #     i=0
+    #     for m in [wakeL,remL, nremL, mixed,indep]:
+    #         if len(m)>0:
+    #             labels.append(labellist[i])
+    #             sizes.append(100*len(m)/self.Ncells)
+    #             explode.append(0)
+    #             colors.append(colorlist[i])
+    #         i+=1
 
-        #To do: add first vs other activity during W
-        #self.foa
+    #     #To do: add first vs other activity during W
+    #     #self.foa
 
-        #making summary figure with jellybeans,
-        fig=plt.figure()
-        grid = plt.GridSpec(2, 3, wspace=0.0, hspace=0.1)
-        plt.subplot(grid[0, 0])
-        plt.imshow(self.mat2plot)
-        plt.axis("off")
-        plt.draw()
-        ax1 = plt.subplot(grid[0, 1])
-        ax1.pie(sizes, explode=explode, labels=labels, colors=colors, autopct='%1.1f%%',
-                shadow=False, textprops={'size': 'x-large', 'weight':'bold'}, startangle=90)
-        ax1.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
-        ax=plt.subplot(grid[0, 2]) #plotting bar plot with the difference in activity for cells who had larger activity during hte first W bout
-        meanw,meann,meanr = self.activityW.mean(axis=1), self.activityN.mean(axis=1),self.activityR.mean(axis=1) #mean activity for every cell
-        error = [(0,0,0),[stats.sem(meanw),stats.sem(meann), stats.sem(meanr)]]
-        bp=plt.bar([0,1,2], [meanw.mean(),meann.mean(),meanr.mean()],
-                   yerr=error,align='center',alpha=1, ecolor='k',capsize=5)
-        plt.xticks([0, 1,2], ('WAKE', 'NREM','REM'))
-        plt.ylabel('Mean Z score')
-        bp[0].set_color('g')
-        bp[1].set_color('b')
-        bp[2].set_color('r')
+    #     #making summary figure with jellybeans,
+    #     fig=plt.figure()
+    #     grid = plt.GridSpec(2, 3, wspace=0.0, hspace=0.1)
+    #     plt.subplot(grid[0, 0])
+    #     plt.imshow(self.mat2plot)
+    #     plt.axis("off")
+    #     plt.draw()
+    #     ax1 = plt.subplot(grid[0, 1])
+    #     ax1.pie(sizes, explode=explode, labels=labels, colors=colors, autopct='%1.1f%%',
+    #             shadow=False, textprops={'size': 'x-large', 'weight':'bold'}, startangle=90)
+    #     ax1.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
+    #     ax=plt.subplot(grid[0, 2]) #plotting bar plot with the difference in activity for cells who had larger activity during hte first W bout
+    #     meanw,meann,meanr = self.activityW.mean(axis=1), self.activityN.mean(axis=1),self.activityR.mean(axis=1) #mean activity for every cell
+    #     error = [(0,0,0),[stats.sem(meanw),stats.sem(meann), stats.sem(meanr)]]
+    #     bp=plt.bar([0,1,2], [meanw.mean(),meann.mean(),meanr.mean()],
+    #                yerr=error,align='center',alpha=1, ecolor='k',capsize=5)
+    #     plt.xticks([0, 1,2], ('WAKE', 'NREM','REM'))
+    #     plt.ylabel('Mean Z score')
+    #     bp[0].set_color('g')
+    #     bp[1].set_color('b')
+    #     bp[2].set_color('r')
 
-        # plt.bar([0,1],[self.fwa[faL, :].mean(), self.owa[faL, :].mean()])
-        # plt.xticks([0,1], ('Onset W', 'Within W'))
-        ax.spines['right'].set_visible(False)
-        ax.spines['top'].set_visible(False)
-        plt.tight_layout()
-        #plt.box(on=None)
-        ax = plt.subplot(grid[1, 0:])
-        #now plotting hypnogram and traces
-        tscore =[t*self.epochl for t in range(len(self.chunk_score))]
-        taxis = (np.arange(self.nframes)) / self.sr
-        plt.plot(tscore[3:], self.chunk_score[3:]*4.5)
-        indxt = list(range(self.Ncells))
-        random.shuffle(indxt)
-        traceindx = indxt[0:8]
-        for i in range(len(traceindx)):
-            plt.plot(taxis[int(self.sr*12):], self.Traces[i,int(self.sr*12):].T + 10 * (i+1),linewidth=0.5)
-        ax.spines['right'].set_visible(False)
-        ax.spines['top'].set_visible(False)
-        ax.spines['left'].set_visible(False)
-        ax.tick_params(left=False)
-        ax.tick_params(labelleft=False)
-        #plt.box(on=None)
-        #ax.set_frame_on(False)
-        #ax.add_axes([0., 1., 1., 0])
-        #ax = plt.axes([0, 1., 0, 1.])
-        #ax.get_xaxis().set_visible(True)
-        #ax.get_yaxis().set_visible(False)
-        plt.show()
+    #     # plt.bar([0,1],[self.fwa[faL, :].mean(), self.owa[faL, :].mean()])
+    #     # plt.xticks([0,1], ('Onset W', 'Within W'))
+    #     ax.spines['right'].set_visible(False)
+    #     ax.spines['top'].set_visible(False)
+    #     plt.tight_layout()
+    #     #plt.box(on=None)
+    #     ax = plt.subplot(grid[1, 0:])
+    #     #now plotting hypnogram and traces
+    #     tscore =[t*self.epochl for t in range(len(self.chunk_score))]
+    #     taxis = (np.arange(self.nframes)) / self.sr
+    #     plt.plot(tscore[3:], self.chunk_score[3:]*4.5)
+    #     indxt = list(range(self.Ncells))
+    #     random.shuffle(indxt)
+    #     traceindx = indxt[0:8]
+    #     for i in range(len(traceindx)):
+    #         plt.plot(taxis[int(self.sr*12):], self.Traces[i,int(self.sr*12):].T + 10 * (i+1),linewidth=0.5)
+    #     ax.spines['right'].set_visible(False)
+    #     ax.spines['top'].set_visible(False)
+    #     ax.spines['left'].set_visible(False)
+    #     ax.tick_params(left=False)
+    #     ax.tick_params(labelleft=False)
+    #     #plt.box(on=None)
+    #     #ax.set_frame_on(False)
+    #     #ax.add_axes([0., 1., 1., 0])
+    #     #ax = plt.axes([0, 1., 0, 1.])
+    #     #ax.get_xaxis().set_visible(True)
+    #     #ax.get_yaxis().set_visible(False)
+    #     plt.show()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Q.value:
