@@ -3,7 +3,7 @@ import numpy as np
 from PyQt6.QtWidgets import QMainWindow, QApplication, QFileDialog, QGraphicsScene, QGraphicsPixmapItem
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-
+import xgboost as xgb
 import time
 import pickle
 #from datetime import datetime, timedelta
@@ -11,6 +11,7 @@ import pickle
 from matplotlib import pyplot as plt
 import scipy.io
 import scipy.io as sio
+from scipy.stats import mode
 from PyQt6.QtGui import QIcon, QPixmap, QImage, QKeyEvent
 from PyQt6.QtCore import Qt
 from collections import defaultdict
@@ -96,9 +97,34 @@ def getptime(score):
         indr=indr[0]
     neps=len(score)
     return len(indw)/neps,len(indnr)/neps,len(indr)/neps
+def expandx(x):
+        #EXpand feature vecr x to include 3 previous and next
+        neps,nfeat = x.shape
+        prev1 = np.ones((neps,nfeat))*-1
+        prev1[1:,:] = x[:-1,:]
+        prev1[0,:] = prev1[1,:]
+        prev2 = np.ones((neps,nfeat))*-1
+        prev2[2:,:] = x[:-2,:]
+        prev2[0,:] = prev2[2,:]
+        prev2[1,:] = prev2[2,:]
+        prev3 = np.ones((neps,nfeat))*-1
+        prev3[3:,:] = x[:-3,:]
+        prev3[0,:] = prev3[3,:]
+        prev3[1,:] = prev3[3,:]
+        prev3[2,:] = prev3[3,:]
+        nextx=np.ones((neps,nfeat))*-1
+        nextx[:-1,:] = x[1:,:]
+        nextx[-1,:] = nextx[-2,:]
+        #Concatenate all inputs into one matrix
+        return np.hstack([x,prev1,prev2,prev3,nextx])
+def halve(vect):
+    #Convert the vector into half of it by averaging every two values
+    if len(vect)//2==len(vect)/2:
+        return vect.reshape(-1,2).mean(axis=1) 
+    else:
+        return vect[:-1].reshape(-1,2).mean(axis=1) 
 
 #core classes
-getbd([2,3,4])
 class MyForm(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -171,6 +197,7 @@ class MyForm(QMainWindow):
         self.faxis = []
         self.fftl =[]
         self.fn = ''
+        self.train_mode = False
 
         #now def all the functions
     def val_ch_epl(self):
@@ -464,12 +491,190 @@ class MyForm(QMainWindow):
     def loadtextScore(self):
         return None
     def autoScore(self):
-        #Compute featues in 2s epochs: RMS of EEG and EMG and EEG power in 2 Hz bins
+        #Compute featues in 2s epochs: RMS of EEG and EMG and EEG power
         #Use gamma and EMG to identify clear sleep and wake epochs
         #Trains XGBoost on easy cases and scores the rest
         #Identifies wake artifacts as high EMG, high Delta
         #Converts 2s score into 4s score adding artifact epochs
         #bands:0-4, 6-10, 125-135, 285-295
+        #Adding 2s epoch FFT
+        self.ui.label_13.setText("Computing Features...")
+        np2sep = int(2 * self.sr)#Number of points in 2 s epochs
+        eegmat2s = self.edfmat[self.ui.EEGch.value()-1,0:np2sep * (self.edfmat.shape[1]//np2sep)].reshape(self.edfmat.shape[1]//np2sep,np2sep)
+        emgmat2s = self.edfmat[self.ui.EMGch.value()-1,0:np2sep * (self.edfmat.shape[1]//np2sep)].reshape(self.edfmat.shape[1]//np2sep,np2sep)
+        freqs2s = np.fft.fftfreq(np2sep, 1/self.sr)
+        indx = np.where(freqs2s>=0)[0]
+        fftmat2s = np.zeros((eegmat2s.shape[0],len(indx)))
+        freqs2s=freqs2s[indx]
+        for epoch in range(eegmat2s.shape[0]):
+            fftmat2s[epoch,:] = np.abs(np.fft.fft(eegmat2s[epoch,:]))[indx]
+        #GEt features:
+        #1- Power bands
+        g1i = 125
+        g1f = 135
+        g2i = 285
+        g2f = 295
+        if self.sr<600:
+            g1i-=90
+            g1f-=90
+            g2i-=200
+            g2f-=200
+        deltafr = np.where(freqs2s<4)[0]
+        gamma1fr = np.where((freqs2s>=g1i)&(freqs2s<=g1f))[0]
+        gamma2fr = np.where((freqs2s>=g2i)&(freqs2s<=g2f))[0]
+        thetafr = np.where((freqs2s>=6)&(freqs2s<=10))[0]
+        self.delta = np.mean(fftmat2s[:,deltafr],axis=1)
+        self.gamma1 = np.mean(fftmat2s[:,gamma1fr],axis=1)
+        self.gamma2 = np.mean(fftmat2s[:,gamma2fr],axis=1)
+        self.theta = np.mean(fftmat2s[:,thetafr],axis=1)
+        self.delta[self.delta<1E-10]=1E-10
+        self.thetad = self.theta/self.delta
+        #2- RMS value
+        self.eegrms = np.zeros(eegmat2s.shape[0])
+        self.emgrms = np.zeros(eegmat2s.shape[0])
+        for e in range(eegmat2s.shape[0]):
+            self.eegrms[e] = np.sqrt(np.mean(eegmat2s[e,:]**2))
+            self.emgrms[e] = np.sqrt(np.mean(emgmat2s[e,:]**2))
+        self.ui.label_13.setText("Autoscoring...")
+        self.ui.label_13.setStyleSheet("color: green;")
+        self.train_mode = True
+        autoscore = np.ones(len(self.delta))*-1
+        #prevent zeros
+        self.emgrms[self.emgrms<1E-10]=1E-10
+        self.eegrms[self.eegrms<1E-10]=1E-10
+        self.delta[self.delta<1E-10]=1E-10
+        
+        #Index for each state, including wake artifact
+        indnr = (self.delta**3)/(self.emgrms*self.gamma1*self.thetad)
+        indw = self.emgrms*self.gamma2/self.eegrms
+        indwa = self.emgrms*self.gamma1*self.delta**2
+        indrem = self.theta * (self.thetad**3) /self.emgrms
+        
+
+        nreps = np.where(indnr>np.percentile(indnr,80))[0]
+        autoscore[nreps] = 1
+        weps = np.where(indw>np.percentile(indw,80))[0]
+        autoscore[weps] = 0
+
+        #getting represetative values for delta and mt
+        deltasleep = np.mean(self.delta[nreps])
+        mtw = np.mean(self.emgrms[weps])
+        #Using the values for filtering WA
+        filt_delta = np.ones(len(indwa))
+        filt_delta[self.delta<deltasleep]=0
+        filt_notdelta = np.ones(len(indrem))
+        filt_notdelta[self.delta>deltasleep]=0
+        filt_mt = np.ones(len(indwa))
+        filt_mt[self.emgrms<mtw]=0
+        filt_notmt = np.ones(len(indrem))
+        filt_notmt[self.emgrms>mtw]=0
+        indwa = indwa*filt_delta *filt_mt
+        indrem = indrem * filt_notdelta *filt_notmt
+
+        reps = np.where(indrem>np.percentile(indrem,96))[0]
+        autoscore[reps] = 2
+        mtrem  = np.mean(self.emgrms[reps])
+        deltarem = np.mean(self.delta[reps])
+        tethar = np.mean(self.theta[reps])
+        waeps = np.where(indwa>np.percentile(indwa,98))[0]
+        autoscore[waeps] = 0.1 #neeed to be an int for now. Will be converted to 0.1
+        indtrain = np.where(autoscore>=0)[0]
+        ind_test = np.where(autoscore<0)[0]
+        print(len(self.theta[indtrain]))
+        x_train = np.vstack([self.delta[indtrain],self.theta[indtrain],self.thetad[indtrain],self.gamma1[indtrain],self.gamma2[indtrain],
+                                        self.eegrms[indtrain],self.emgrms[indtrain]]).T
+        x_test = np.vstack([self.delta[ind_test],self.theta[ind_test],self.thetad[ind_test],self.gamma1[ind_test],self.gamma2[ind_test],
+                                        self.eegrms[ind_test],self.emgrms[ind_test]]).T
+        y_train = autoscore[indtrain]
+        #Add two previous and one next
+        x_train = expandx(x_train)
+        x_test = expandx(x_test)
+        
+        #Train ML
+        # Define the XGBoost model
+        y_train[y_train==0.1]=3
+        # Determine class weights
+        class_weights = len(y_train) / (int(len(set(y_train))) * np.bincount(y_train.astype(int)))
+        print(class_weights)
+        xgb_model = xgb.XGBClassifier(scale_pos_weight=class_weights[0],
+                              objective='multi:softmax',
+                              num_class=4,
+                              learning_rate=0.1,
+                              n_estimators=100,
+                              max_depth=3,
+                              min_child_weight=1,
+                              gamma=0.1,
+                              subsample=0.8,
+                              colsample_bytree=0.8,
+                              n_jobs=-1,
+                              random_state=42)
+        # Train the model
+        
+        xgb_model.fit(x_train, y_train)
+        # predict the remaining epochs
+        y_pred = xgb_model.predict(x_test)
+        y_pred[y_pred==3]=0.1
+        autoscore[ind_test] = y_pred
+
+        #Now convert autoscore to 4s epochs and add artifacts for mixed scores
+        if len(autoscore)//2 != len(autoscore)/2:
+            autoscore=autoscore[:-1] #Trim last epoch if it is not even
+        autos = autoscore.reshape(-1,2)
+        for e in range(autos.shape[0]-1):
+            if np.min(autos[e,:])>=0:
+                #If any one is WA, score as WA
+                if np.max(autos[e,:]==0.1):
+                    self.score[e]=0.1
+                else:
+                    if np.round(autos[e,0])==np.round(autos[e,1]):
+                        self.score[e] = np.max(autos[e,:])
+                    else:
+                        if e>0:
+                            if np.max(autos[e,:]==3):
+                                self.score[e] = 3
+                            else:
+                                #If one of the pair have same score of previous epoch, score as previous epoch with artifact
+                                if autos[e,0] == np.round(self.score[e-1]):
+                                    self.score[e] = np.round(self.score[e-1])+0.1
+                                elif autos[e,1] == np.round(self.score[e-1]):
+                                    self.score[e] = np.round(self.score[e-1])+0.1
+                                elif e<len(self.score)-1:
+                                    if autos[e,0] == np.round(self.score[e+1]):
+                                        self.score[e] = np.round(self.score[e+1])+0.1
+                                    elif autos[e,1] == np.round(self.score[e+1]):
+                                        self.score[e] = np.round(self.score[e+1])+0.1
+                                else:
+                                    self.score[e] = np.round(self.score[e-1])+0.1
+                        else:
+                            self.score[e] = mode(np.hstack(autos[e,:],autos[e+1,:])).mode[0]
+        #replace all NR that have low delta and high tethad by R if there is a R epoch nearby
+        #Convert 2s vectors into 4s
+        delta4 = halve(self.delta) 
+        emg4 = halve(self.emgrms)
+        tetha4 = halve(self.delta)
+        newindr = np.where((np.round(self.score)==1) | (self.score<0))[0]
+        mtrem  = 1.4*np.mean(self.emgrms[reps])
+        deltarem = 1.4*np.mean(self.delta[reps])
+        tethar = 0.5*np.mean(self.theta[reps])
+        for e in newindr:
+            if np.max(np.round(self.score[max([0,e-5]):min([e+5,len(self.score)-1])])==2):
+                if (delta4[e]<deltarem) and (emg4[e]<mtrem) and (tetha4[e]>tethar):
+                    self.score[e]=2
+        #fix remaining unscored epochs
+        unsc = np.where(self.score<0)
+        if len(unsc)>0:
+            for e in unsc[0]:
+                ne=e.copy()
+                while (ne>0) and (self.score[ne]<0):
+                    ne-=1
+                self.score[e] = self.score[ne]
+        #Replace epochs flanked by REM into REM
+        for ep in range(1,len(self.score)-1):
+            if (round(self.score[ep-1])==2) and (round(self.score[ep+1])==2):
+                self.score[ep]=2
+
+        
+        self.update_plots()
         return None
     def evaluateScore(self):
         return None
@@ -499,9 +704,9 @@ class MyForm(QMainWindow):
             plt.plot(self.freqstats,np.log(fftr),'r-',label='REM')
         else:
             indnr=[]
-        plt.ylabel('Log(|FFT|) (Log $V^2$)',fontsize=15)
+        plt.ylabel('Log(|FFT|) (Log $V$)',fontsize=15)
         plt.xlabel('Frequency (Hz)',fontsize=15)
-        plt.title('Power spectrum by state',fontsize=18)
+        plt.title('FFT by state',fontsize=18)
         plt.legend()
         plt.show()
         #Plot again for selected freqs in linear scale
@@ -516,9 +721,9 @@ class MyForm(QMainWindow):
         if len(indr)>0:
             fftr = np.mean(self.fftmat[indr,:],axis=0)
             plt.plot(self.freqs,fftr,'#FF6347',label='REM')
-        plt.ylabel(' FFT ($V^2$)',fontsize=15)
+        plt.ylabel(' |FFT| ($V$)',fontsize=15)
         plt.xlabel('Frequency (Hz)',fontsize=15)
-        plt.title('Power spectrum by state',fontsize=18)
+        plt.title('FFT by state',fontsize=18)
         plt.legend()
         #now BD and PT
         bd = getbd(self.score)
@@ -546,6 +751,61 @@ class MyForm(QMainWindow):
     def undo(self):
         return None
     def plotTrace(self):
+        plt.figure()
+        plt.subplot(6,1,1)
+        plt.plot(self.delta)
+        plt.ylabel('Delta')
+        plt.subplot(6,1,2)
+        plt.plot(self.gamma1)
+        plt.ylabel('$\gamma$1')
+        plt.subplot(6,1,3)
+        plt.plot(self.gamma2)
+        plt.ylabel('$\gamma$2')
+        plt.subplot(6,1,4)
+        plt.plot(self.theta)
+        plt.ylabel('$\\theta$')
+        plt.subplot(6,1,5)
+        plt.plot(self.eegrms)
+        plt.ylabel('EEGrms')
+        plt.subplot(6,1,6)
+        plt.plot(self.emgrms)
+        plt.ylabel('EMGrms')
+        #Plots mean power for bands
+        print()
+        plt.figure()
+        plt.plot(self.gamma2,self.emgrms,'k.',alpha=0.4)
+        plt.ylabel('EMG',fontsize=15)
+        plt.xlabel('Gamma 285-295 Hz',fontsize=15)
+        plt.title(f'r={np.round(np.corrcoef(self.gamma2,self.emgrms)[0,1],2)}')
+        plt.figure()
+        deltafr = np.where(self.freqstats<4)[0]
+        gammafr = np.where((self.freqstats>30)&(self.freqstats<59))[0]
+        gammarem = np.where((self.freqstats>=125)&(self.freqstats<=135))[0]
+        gammaw = np.where((self.freqstats>=285)&(self.freqstats<=295))[0]
+        window_size = 15
+        window = np.ones(int(window_size))/float(window_size)
+        
+        delta = np.mean(self.fftstats[:,deltafr],axis=1)
+        gamma = scipy.signal.medfilt(np.mean(self.fftstats[:,gammafr],axis=1))
+        gammarem = np.mean(self.fftstats[:,gammarem],axis=1)
+        gammaw = np.mean(self.fftstats[:,gammaw],axis=1)
+        plt.subplot(4,1,1)
+        plt.plot(np.convolve(delta, window, 'same'),'k-',linewidth=0.5)
+        plt.ylim(0,np.percentile(delta,95))
+        plt.ylabel('$\delta$',fontsize=16)
+        plt.subplot(4,1,2)
+        plt.plot(np.convolve(gamma, window, 'same'),'k-',linewidth=0.5)
+        plt.ylim(0,np.percentile(gamma,95))
+        plt.ylabel('$\gamma$',fontsize=16)
+        plt.subplot(4,1,3)
+        plt.plot(np.convolve(gammarem, window, 'same'),'k-',linewidth=0.5)
+        plt.ylim(0,np.percentile(gammarem,95))
+        plt.ylabel('$\gamma$_Rem',fontsize=16)
+        plt.subplot(4,1,4)
+        plt.plot(np.convolve(gammaw, window, 'same'),'k-',linewidth=0.5)
+        plt.ylim(0,np.percentile(gammaw,95))
+        plt.ylabel('$\gamma$_W',fontsize=16)
+        plt.show()
         return None
     def update_tracel(self):
         self.tracel=self.ui.epoch_length_2.value()
@@ -700,6 +960,7 @@ class MyForm(QMainWindow):
             self.tracel = self.ui.epoch_length_2.value()
             self.edfmat = np.asarray(edf.get_data())
             npep = int(self.epochl * self.sr)
+            
             leeg= len(self.edfmat[0,:])
             print("Calculating FFT from channel",self.ui.EEGch.value())
             print("last EEG point:",npep * (leeg//npep))
@@ -713,7 +974,7 @@ class MyForm(QMainWindow):
             for epoch in range(leeg//npep):
                 self.fftmat[epoch,:] = np.abs(np.fft.fft(self.eegmat[epoch,:]))
                 #We only one the freqs between 0 and the max freq FFT
-
+            
             #now finding the pos of the 0 and maxfrec
             pos0 = np.argmin(np.abs(self.freqs))
             posmax = np.argmin(np.abs(self.freqs - self.ui.maxF.value()))
