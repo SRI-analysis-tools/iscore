@@ -1,6 +1,7 @@
-PyQt5==5.15.6
-PyQt5-Qt5==5.15.2
-PyQt5-sip==12.9.0
+pyqt6=6.4.2=pypi_0
+pyqt6-qt6=6.4.2=pypi_0
+pyqt6-sip=13.4.1=pypi_0
+pyqtgraph=0.12.3=pypi_0
 pyqtgraph==0.12.3
 qtconsole==5.2.2
 QtPy==2.0.0
@@ -9,3 +10,4 @@ scipy
 mne
 h5py
 EDFlib-Python
+scikit-learn=1.2.2=pypi_0
