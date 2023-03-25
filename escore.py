@@ -326,6 +326,7 @@ class MyForm(QMainWindow):
 
     def update_useZT(self):
         self.useZT = self.ui.checkBox_5.isChecked()
+        self.update_plots()
     def update_currep(self):
         self.currep = int(float(self.ui.lineEdit.text()))
         self.update_epocht()
@@ -847,6 +848,22 @@ class MyForm(QMainWindow):
                 plotCanv.plot(self.t0[fp:lp], self.edfmat[sch, fp:lp],  pen=c[p])
                 p += 1
             plotCanv.setXRange(self.t0[fp],self.t0[lp], padding=0)
+
+            axis = plotCanv.getAxis('bottom')
+            # Set custom ticks with labels formatted as hh:mm:ss
+            tick_values = np.arange(self.t0[fp],self.t0[lp],4).astype(int) # set tick values to the x-coordinates of the data points
+            startt = time.gmtime(self.tstart.timestamp())
+            inits = startt.tm_hour*3600 + startt.tm_min * 60 + startt.tm_sec
+            difsec = inits
+            if self.ui.checkBox_5.isChecked(): #SUbtract ZT0
+                self.z0 = self.ui.timeEdit_3.time()
+                z0secs = self.z0.hour()*3600 + self.z0.minute() * 60 + self.z0.second()
+                difsec = inits-z0secs
+                if difsec<0:
+                    difsec = 24*3600 + difsec
+
+            ticks = [(t, QtCore.QTime(int(np.floor(t/3600)), (t%3600)//60, (t%3600)%60).addSecs(difsec).toString("hh:mm:ss")) for t in tick_values]
+            axis.setTicks([ticks])
             if self.ui.checkBox_3.isChecked():
                 ylim = self.maxEEG
             else:
@@ -953,7 +970,7 @@ class MyForm(QMainWindow):
             self.ui.label_8.setText("Start date:" + time.strftime("%m/%d/%Y %H:%M:%S ",time.gmtime(self.tstart.timestamp())))
             self.ui.label_10.setText("End date:" + time.strftime("%m/%d/%Y %H:%M:%S ", dt2))
             #print(edf.info["meas_date"][1])
-            self.t0 = edf.times
+            self.t0 = edf.times #In seconds since start?
             self.totalp = len(self.t0)
             self.maxep = int(edf.times[-1]//self.epochl)
             print('Max eps:',self.maxep)
