@@ -1,13 +1,24 @@
+#!/usr/bin/env python3
+"""
+This program display polysomnography signals and allows to score epochs into 
+behavioral states either manually or semi automatically. 
+It also computes and plot statisitics of the sleep architecture
+"""
+# Author: Jaime Heiss
+# Date created: MArch 25, 2023
+# License: Free with permission
+
 import sys, os
 import numpy as np
-from PyQt6.QtWidgets import QMainWindow, QApplication, QFileDialog, QGraphicsScene, QGraphicsPixmapItem
+from PyQt6.QtWidgets import QMainWindow, QApplication, QFileDialog, QMessageBox, QGraphicsScene, QGraphicsPixmapItem
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import xgboost as xgb
 import time
 import pickle
+import pandas as pd
 #from datetime import datetime, timedelta
-
+from sklearn.utils import class_weight
 from matplotlib import pyplot as plt
 import scipy.io
 import scipy.io as sio
@@ -73,16 +84,7 @@ def getbouts(score,st):
             pos_index+=1
     return np.array(boutdur)
                 
-def getbd(score,minbd=3, epochd=4):
-    #mean bout duration in min of W,NR and REM
-    #score is numeric where 0=W, 1=NR and 2 =R
-    w = getbouts(score,0)
-    nr = getbouts(score,1)
-    r = getbouts(score,2)
-    w = w[w>=minbd]
-    nr = nr[nr>=minbd]
-    r = r[r>=minbd]
-    return np.mean(w)*epochd/60,np.mean(nr)*epochd/60,np.mean(r)*epochd/60
+
     
 def getptime(score):
     #Returns the percentage of time in each state
@@ -148,6 +150,7 @@ class MyForm(QMainWindow):
         self.ui.pushButton_14.clicked.connect(self.restoreEEG_scale)
         self.ui.pushButton_15.clicked.connect(self.restoreEMG_scale)
         self.ui.pushButton_19.clicked.connect(self.closeap)
+        self.ui.pushButton_22.clicked.connect(self.help)
         self.ui.horizontalScrollBar.valueChanged.connect(self.scrollbar_moved)
         self.ui.epoch_length.valueChanged.connect(self.val_ch_epl)
         #self.ui.epoch_length.editingFinished.connect(self.update_epl) not working well for now
@@ -189,7 +192,7 @@ class MyForm(QMainWindow):
         self.maxFFT = 4
         self.t = 0
         self.font = QtGui.QFont("SansSerif", 14)
-        self.dictsc ={0:'W', 0.1:'WA',1:'NR',1.1:'NA',2:'R',2.1:'RA'}
+        self.dictsc ={0:'W', 0.1:'WA',1:'NR',1.1:'NA',2:'R',2.1:'RA',-1:'U',3:'C',3.1:'CA',4:'S'}
         self.totalp = 0
         self.scplt = None
         self.hypcrsr = None
@@ -197,12 +200,57 @@ class MyForm(QMainWindow):
         self.faxis = []
         self.fftl =[]
         self.fn = ''
-        self.train_mode = False
+        self.thw=[np.nan,np.nan]
+        self.thnr=[np.nan,np.nan]
+        self.thr=[np.nan,np.nan]
+        self.thwa=[np.nan,np.nan]
 
         #now def all the functions
     def val_ch_epl(self):
         return None
+    def getbd(self,score,minbd=3):
+        #mean bout duration in min of W,NR and REM
+        #score is numeric where 0=W, 1=NR and 2 =R
+        epochd=self.epochl
+        w = getbouts(score,0)
+        nr = getbouts(score,1)
+        r = getbouts(score,2)
+        w = w[w>=minbd]
+        nr = nr[nr>=minbd]
+        r = r[r>=minbd]
+        return np.mean(w)*epochd/60,np.mean(nr)*epochd/60,np.mean(r)*epochd/60
 
+    def help(self):
+        msg_box = QMessageBox()
+        msg_box.setIcon(QMessageBox.Icon.Information)
+        #msg_box.setInformativeText('Additional information can be displayed here.')
+        msg_box.setWindowTitle('Iscore V 0.1 (Under development)')
+
+        # set the detailed text with markup text
+        msg_box.setText('<font size="6"><html><table border="1" cellpadding="5">\
+        <tr><th>Key</th><th>Action</th></tr>\
+        <tr><td>right</td><td>next epoch</td></tr>\
+        <tr><td>left</td><td>previous epoch</td></tr>\
+        <tr><td>up</td><td>9 epochs forward</td></tr>\
+        <tr><td>down</td><td>9 epochs backwards</td></tr>\
+        <tr><td>n</td><td>next unscored epoch</td></tr>\
+        <tr><td>q</td><td>next NREM epoch</td></tr>\
+        <tr><td>r</td><td>next REM epoch</td></tr>\
+        <tr><td>w</td><td>Next W epoch</td></tr>\
+        <tr><td>0,M</td><td>W</td></tr>\
+        <tr><td>9,O</td><td>WA</td></tr>\
+        <tr><td>1,J</td><td>NR</td></tr>\
+        <tr><td>7,U</td><td>NA</td></tr>\
+        <tr><td>5,K</td><td>REM</td></tr>\
+        <tr><td>8,I</td><td>RA</td></tr>\
+        <tr><td>3,.</td><td>C</td></tr>\
+        <tr><td>2,,</td><td>CA</td></tr>\
+        <tr><td>4,S</td><td>S</td></tr>\
+        <tr><td>6,;</td><td>U</td></tr>\
+        </table></html></font>')
+        msg_box.exec()
+        return None
+        
     def update_epl(self):
         self.ui.label_13.setText("Recalculating...")
         self.epochl = self.ui.epoch_length.value()
@@ -216,6 +264,7 @@ class MyForm(QMainWindow):
         self.fftmat = np.zeros(np.shape(self.eegmat))
         self.freqs = np.fft.fftfreq(npep, 1 / self.sr)
         self.score = -1 * np.ones(self.maxep)
+        self.autoscore = np.ones(len(self.score)*int(self.epochl/2))*-1
         for epoch in range(leeg // npep):
             self.fftmat[epoch, :] = np.abs(np.fft.fft(self.eegmat[epoch, :]))
             # We only one the freqs between 0 and the max freq FFT
@@ -390,8 +439,6 @@ class MyForm(QMainWindow):
 
                 self.scoredict['score']=arrays['sc'].flatten()
                 self.scoredict['el']=arrays['epocl'].flatten()[0]
-                print(len(self.scoredict['score']))
-                print(len(self.score))
                 for i,s in enumerate(self.scoredict['score']):
                     if not np.isnan(s):
                         self.score[i]=s
@@ -409,6 +456,12 @@ class MyForm(QMainWindow):
                         else:
                             self.manual_score.append(lines[linen])
         self.update_plots()
+    def update_autoscore(self): #copies score into autoscore with 2 s epochs
+        ind = np.arange(0,len(self.autoscore),int(self.epochl/2))
+        for n in range(int(self.epochl/2)):
+            self.autoscore[ind+n] = self.score
+            
+
 
     def saveScoring(self):
         fn=self.fn[:-4]+'.pkl'
@@ -419,76 +472,14 @@ class MyForm(QMainWindow):
             pickle.dump(self.scoredict, handle, protocol=pickle.HIGHEST_PROTOCOL)
         print('pickled!')
         print(self.scoredict)
-        dictslp = {0: 'W', 0.1: 'WA', 1: 'NR', 1.1: 'NA', 2: 'R', 2.1: 'RA'}
         f=open(fn[:-4]+'.txt','w')
-        for s in self.scoredict['score']:
-            if s in list(dictslp.keys()):
+        for s in self.dictsc['score']:
+            if s in list(self.dict.keys()):
                 f.write(dictslp[s] + '\n')
             else:
                 f.write('' + '\n')
         f.close()
-        # if len(self.scorefile) < 1:
-        #     self.scorefile=self.fn+ ".scr" #check this
-        #     filelist = os.listdir()
-        #     if self.scorefile in filelist:
-        #         copyfile(self.scorefile,"backup_"+self.scorefile)
-        #     f = open(self.scorefile, 'w')
-        #     f.write(self.ui.dateTimeEdit_4.value())
-        #     for st in self.manual_score:
-        #         f.write(st)
-        #     f.close()
-            # fn = get(handles.filename, 'string');
-            # fn = strcat(fn(1:end - 4), '.mat');
-            # k = 0;
-            # backupfn = fn;
-            # while exist(backupfn)
-            #     k = k + 1;
-            #     backupfn = get(handles.filename, 'string');
-            #     backupfn = strcat(fn(1:end - 4), '_', num2str(k), '.mat');
-            #     end
-            #     if k > 0
-            #         copyfile(fn, backupfn)
-            #     end
-            #
-            #     if isnan(handles.score(end))
-            #         handles.score(end) = handles.score(end - 1);
-            #     end
-            #     startp = str2double(get(handles.startp, 'string'));
-            #     endp = str2double(get(handles.endp, 'string'));
-            #     sc = handles.score;
-            #     vali = handles.validatedsc;
-            #     scalefft = get(handles.limemg2, 'string');
-            #     zt0 = get(handles.edit4, 'string');
-            #     rangefft = handles.emgscale;
-            #     epocl = handles.el;
-            #     t0 = strcat(get(handles.stdate, 'string'), '_', get(handles.toedit, 'string'));
-            #     t0(find(t0 == '/')) = '_';
-            #     t0 = t0(4:end);
-            #     save(fn, 'sc', 'vali', 'startp', 'endp', 'zt0', 'scalefft', 'rangefft', 'epocl', 't0');
-            #     helpdlg('Score saved')
-
-
-            #print('Epoch length:',self.epochl)
-            #plotsc = self.ui.PlotWidget2
-            #print(self.starttimes[0])
-            #edfstart = time.strptime(self.t0, '%d_%m_%Y_%H:%M:%S')
-            #print(edfstart)
-            #dt = time.mktime(edfstart)
-            #print(dt)
-            #self.timesscore.append(dt)
-            #for i in range(len(self.score)):
-            #    if i>0:
-            #        self.timesscore.append(self.timesscore[i-1]+float(self.epochl))
-
-            #print(len(self.timesscore))
-            #taxis = #time of each epoch//(np.arange(len(self.score))) * self.epochl
-            #plotsc.plot(self.timesscore, self.score)
-            #also plotting in the traces window (requires sync)
-            #taxis = (np.arange(self.nframes)) / self.sr
-            #plotCanv = self.ui.PlotWidget_tr
-            #ampFactor = self.sr * self.epochl
-            #hrscoring = ampfun(self.score, ampFactor)
-            #plotCanv.plot(taxis, hrscoring,  pen='k')
+       
     def loadtextScore(self):
         return None
     def autoScore(self):
@@ -516,10 +507,12 @@ class MyForm(QMainWindow):
         g2i = 285
         g2f = 295
         if self.sr<600:
-            g1i-=90
-            g1f-=90
-            g2i-=200
-            g2f-=200
+            g1i=30
+            g1f=100
+            g2i=min([150,(self.sr/2)-20])
+            g2f=min([170,(self.sr/2)])
+        print(f'Gamma1:{g1i}-{g1f}')
+        print(f'Gamma2:{g2i}-{g2f}')
         deltafr = np.where(freqs2s<4)[0]
         gamma1fr = np.where((freqs2s>=g1i)&(freqs2s<=g1f))[0]
         gamma2fr = np.where((freqs2s>=g2i)&(freqs2s<=g2f))[0]
@@ -539,54 +532,65 @@ class MyForm(QMainWindow):
         self.ui.label_13.setText("Autoscoring...")
         self.ui.label_13.setStyleSheet("color: green;")
         self.train_mode = True
-        autoscore = np.ones(len(self.delta))*-1
+        self.autoscore = np.ones(len(self.delta))*-1
         #prevent zeros
         self.emgrms[self.emgrms<1E-10]=1E-10
         self.eegrms[self.eegrms<1E-10]=1E-10
         self.delta[self.delta<1E-10]=1E-10
         
         #Index for each state, including wake artifact
-        indnr = (self.delta**3)/(self.emgrms*self.gamma1*self.thetad)
-        indw = self.emgrms*self.gamma2/self.eegrms
-        indwa = self.emgrms*self.gamma1*self.delta**2
-        indrem = self.theta * (self.thetad**3) /self.emgrms
+        self.indnr = (self.delta**3)/(self.emgrms*self.gamma1*self.thetad)
+        self.indw = self.emgrms*self.gamma2/self.eegrms
+        self.indwa = self.emgrms*self.gamma1*self.delta**2
+        self.indrem = self.theta * (self.thetad**3) /self.emgrms
         
+        if self.ui.checkBox_2.isChecked():#Full auto. 
+            #Requires >4% of the epochs to be REM, 2% to be WA and 20% to be NR and W
 
-        nreps = np.where(indnr>np.percentile(indnr,80))[0]
-        autoscore[nreps] = 1
-        weps = np.where(indw>np.percentile(indw,80))[0]
-        autoscore[weps] = 0
+            nreps = np.where(self.indnr>np.percentile(self.indnr,80))[0]
+            self.autoscore[nreps] = 1
+            weps = np.where(self.indw>np.percentile(self.indw,80))[0]
+            self.autoscore[weps] = 0
 
-        #getting represetative values for delta and mt
-        deltasleep = np.mean(self.delta[nreps])
-        mtw = np.mean(self.emgrms[weps])
-        #Using the values for filtering WA
-        filt_delta = np.ones(len(indwa))
-        filt_delta[self.delta<deltasleep]=0
-        filt_notdelta = np.ones(len(indrem))
-        filt_notdelta[self.delta>deltasleep]=0
-        filt_mt = np.ones(len(indwa))
-        filt_mt[self.emgrms<mtw]=0
-        filt_notmt = np.ones(len(indrem))
-        filt_notmt[self.emgrms>mtw]=0
-        indwa = indwa*filt_delta *filt_mt
-        indrem = indrem * filt_notdelta *filt_notmt
+            #getting represetative values for delta and mt
+            deltasleep = np.mean(self.delta[nreps])
+            mtw = np.mean(self.emgrms[weps])
+            #Using the values for filtering WA
+            filt_delta = np.ones(len(self.indwa))
+            filt_delta[self.delta<deltasleep]=0
+            filt_notdelta = np.ones(len(self.indrem))
+            filt_notdelta[self.delta>deltasleep]=0
+            filt_mt = np.ones(len(self.indwa))
+            filt_mt[self.emgrms<mtw]=0
+            filt_notmt = np.ones(len(self.indrem))
+            filt_notmt[self.emgrms>mtw]=0
+            self.indwa = self.indwa*filt_delta *filt_mt
+            self.indrem = self.indrem * filt_notdelta *filt_notmt
+            reps = np.where(self.indrem>np.percentile(self.indrem,96))[0]
+            self.autoscore[reps] = 2
+            mtrem  = np.mean(self.emgrms[reps])
+            deltarem = np.mean(self.delta[reps])
+            tethar = np.mean(self.theta[reps])
+            waeps = np.where(self.indwa>np.percentile(self.indwa,98))[0]
+            self.autoscore[waeps] = 0.1 #neeed to be an int for now. Will be converted to 0.1
+        else:#Ask user to score examples based on the index values for each state
+            #Start with the middle value and go up or down until the state changes
+            #Initialize training examples
+            #We need to find two thresholds for each index, one that gurantees presence and one that gurantees absence
+            
+            #self.evaluateScore()
+            None
 
-        reps = np.where(indrem>np.percentile(indrem,96))[0]
-        autoscore[reps] = 2
-        mtrem  = np.mean(self.emgrms[reps])
-        deltarem = np.mean(self.delta[reps])
-        tethar = np.mean(self.theta[reps])
-        waeps = np.where(indwa>np.percentile(indwa,98))[0]
-        autoscore[waeps] = 0.1 #neeed to be an int for now. Will be converted to 0.1
-        indtrain = np.where(autoscore>=0)[0]
-        ind_test = np.where(autoscore<0)[0]
-        print(len(self.theta[indtrain]))
+        
+        
+        indtrain = np.where(self.autoscore>=0)[0]
+        ind_test = np.where(self.autoscore<0)[0]
+   
         x_train = np.vstack([self.delta[indtrain],self.theta[indtrain],self.thetad[indtrain],self.gamma1[indtrain],self.gamma2[indtrain],
                                         self.eegrms[indtrain],self.emgrms[indtrain]]).T
         x_test = np.vstack([self.delta[ind_test],self.theta[ind_test],self.thetad[ind_test],self.gamma1[ind_test],self.gamma2[ind_test],
                                         self.eegrms[ind_test],self.emgrms[ind_test]]).T
-        y_train = autoscore[indtrain]
+        y_train = self.autoscore[indtrain]
         #Add two previous and one next
         x_train = expandx(x_train)
         x_test = expandx(x_test)
@@ -594,12 +598,15 @@ class MyForm(QMainWindow):
         #Train ML
         # Define the XGBoost model
         y_train[y_train==0.1]=3
-        # Determine class weights
-        class_weights = len(y_train) / (int(len(set(y_train))) * np.bincount(y_train.astype(int)))
-        print(class_weights)
-        xgb_model = xgb.XGBClassifier(scale_pos_weight=class_weights[0],
+        
+        classes_weights = class_weight.compute_sample_weight(
+        class_weight='balanced',
+        y=y_train
+        )
+
+        xgb_model = xgb.XGBClassifier(
                               objective='multi:softmax',
-                              num_class=4,
+                              num_class=len(set(y_train)),
                               learning_rate=0.1,
                               n_estimators=100,
                               max_depth=3,
@@ -611,16 +618,16 @@ class MyForm(QMainWindow):
                               random_state=42)
         # Train the model
         
-        xgb_model.fit(x_train, y_train)
+        xgb_model.fit(x_train, y_train, sample_weight=classes_weights)
         # predict the remaining epochs
         y_pred = xgb_model.predict(x_test)
         y_pred[y_pred==3]=0.1
-        autoscore[ind_test] = y_pred
+        self.autoscore[ind_test] = y_pred
 
         #Now convert autoscore to 4s epochs and add artifacts for mixed scores
-        if len(autoscore)//2 != len(autoscore)/2:
-            autoscore=autoscore[:-1] #Trim last epoch if it is not even
-        autos = autoscore.reshape(-1,2)
+        if len(self.autoscore)//2 != len(self.autoscore)/2:
+            self.autoscore=self.autoscore[:-1] #Trim last epoch if it is not even
+        autos = self.autoscore.reshape(-1,2)
         for e in range(autos.shape[0]-1):
             if np.min(autos[e,:])>=0:
                 #If any one is WA, score as WA
@@ -677,15 +684,203 @@ class MyForm(QMainWindow):
         
         self.update_plots()
         return None
-    def evaluateScore(self):
+    
+    def evaluateScore(self):#Ask for examples and find lower and upper threshold of each state index
+        #as half the distance between current percentile and max value (or min)
+        #setting W thresholds
+        if np.isnan(np.sum(self.thw)): 
+            if np.isnan(self.thwa[0]):#lower threshold
+                if self.score[self.currep]==0:#If last score was W, reduce percentile and ask again
+                    if self.cper==0:
+                        #All epochs w
+                        self.thw[0]=0
+                        self.cper=50
+                    elif self.cper>1:
+                        self.cper=self.cper/2
+                    else:
+                        self.cper=0
+                    indp = np.where(self.indw>np.percentile(self.indw,self.cper))[0]#Index of the values above cper
+                    ce =indp[np.argmin(self.indw[indp])]
+                    self.ui.label_13.setText("Please score current epoch\n and add to train")
+                    self.ui.lineEdit.setText(str(int(ce)))
+                    self.update_currep()
+                else:#Set lower threshold
+                        self.thw[0] = np.percentile(self.indw,self.cper/2)
+                        self.cper=50
+            else:
+                if self.score[self.currep]>0.5:#If last score was not W, increase percentile and ask again
+                    if self.cper==100:
+                        #No W epochs
+                        self.thw[1]=np.max(self.indw)+1
+                        self.cper=50
+
+                    elif self.cper>1:
+                        self.cper+=((100-self.cper)/2)
+                    else:
+                        self.cper=100
+                    indp = np.where(self.indw>np.percentile(self.indw,self.cper))[0]
+                    ce =indp[np.argmin(self.indw[indp])]
+                    self.ui.label_13.setText("Please score current epoch \n and add to train")
+                    self.ui.lineEdit.setText(str(int(ce)))
+                    self.update_currep()
+                else:#Set upper threshold
+                        self.thw[1] = np.percentile(self.indw,(100-self.cper)/2)
+                        self.cper=50
+        #setting NR thresholds
+        if np.isnan(np.sum(self.thnr)): 
+            if np.isnan(self.thnr[0]):#lower threshold
+                if self.score[self.currep]==1:#If last score was NR, reduce percentile and ask again
+                    if self.cper==0:
+                        #All epochs NR
+                        self.thnr[0]=0
+                        self.cper=50
+
+                    elif self.cper>1:
+                        self.cper=self.cper/2
+                    else:
+                        self.cper=0
+                    indp = np.where(self.indnr>np.percentile(self.indnr,self.cper))[0]
+                    ce =indp[np.argmin(self.indnr[indp])]
+                    self.ui.label_13.setText("Please score current epoch")
+                    self.ui.lineEdit.setText(str(int(ce)))
+                    self.update_currep()
+                else:#Set lower threshold
+                        self.thnr[0] = np.percentile(self.indnr,self.cper/2)
+                        self.cper=50
+            else:
+                if np.round(self.score[self.currep])!=1:#If last score was not NR, increase percentile and ask again
+                    if self.cper==100:
+                        #No NR epochs
+                        self.thnr[1]=np.max(self.indw)+1
+                        self.cper=50
+                    elif self.cper>1:
+                        self.cper+=((100-self.cper)/2)
+                    else:
+                        self.cper=100
+                    indp = np.where(self.indnr>np.percentile(self.indnr,self.cper))[0]
+                    ce =indp[np.argmin(self.indnr[indp])]
+                    self.ui.label_13.setText("Please score current epoch")
+                    self.ui.lineEdit.setText(str(int(ce)))
+                    self.update_currep()
+                else:#Set upper threshold
+                        self.thnr[1] = np.percentile(self.indnr,(100-self.cper)/2)
+                        self.cper=50
+        #Adjust index of WA and R based on W and NR:
+        self.autoscore = np.ones(len(self.score)*2)*-1
+        for e in range(len(self.score)):
+            self.autoscore[2*e]=self.score[e]
+            self.autoscore[2*e+1]=self.score[e]
+        epw = np.where(self.indw>self.thw[1])[0]
+        epnr = np.where(self.indnr>self.thnr[1])[0]
+        self.autoscorep[epw]=0
+        self.autoscore[epnr]=1
+        #getting represetative values for delta and mt
+        deltasleep = np.mean(self.delta[epnr])
+        mtw = np.mean(self.emgrms[epw])
+        #Using the values for filtering WA
+        filt_delta = np.ones(len(self.indwa))
+        filt_delta[self.delta<deltasleep]=0
+        filt_notdelta = np.ones(len(self.indrem))
+        filt_notdelta[self.delta>deltasleep]=0
+        filt_mt = np.ones(len(self.indwa))
+        filt_mt[self.emgrms<mtw]=0
+        filt_notmt = np.ones(len(indrem))
+        filt_notmt[self.emgrms>mtw]=0
+        self.indwa = self.indwa*filt_delta *filt_mt
+        self.indrem = self.indrem * filt_notdelta *filt_notmt
+
+        if np.isnan(np.sum(self.thwa)): #setting WA thresholds
+            if np.isnan(self.thwa[0]):#lower threshold
+                if self.score[self.currep]==0.1:#If last score was W, reduce percentile and ask again
+                    if self.cper==0:
+                        #All epochs wa
+                        self.thwa[0]=0
+                        self.cper=50
+                    elif self.cper>1:
+                        self.cper=self.cper/2
+                    else:
+                        self.cper=0
+                    indp = np.where(self.indwa>np.percentile(self.indwa,self.cper))[0]
+                    ce =indp[np.argmin(self.indwa[indp])]
+                    self.ui.label_13.setText("Please score current epoch")
+                    self.ui.lineEdit.setText(str(int(ce)))
+                    self.update_currep()
+                else:#Set lower threshold
+                        self.thwa[0] = np.percentile(self.indwa,self.cper/2)
+                        self.cper=50
+            else:
+                if self.score[self.currep]!=0.1:#If last score was not WA, increase percentile and ask again
+                    if self.cper==100:
+                        #No WA epochs
+                        self.thwa[1]=np.max(self.indwa)+1
+                        self.cper=50
+                    elif self.cper>1:
+                        self.cper+=((100-self.cper)/2)
+                    else:
+                        self.cper=100
+                    indp = np.where(self.indwa>np.percentile(self.indwa,self.cper))[0]
+                    ce =indp[np.argmin(self.indwa[indp])]
+                    self.ui.label_13.setText("Please score current epoch")
+                    self.ui.lineEdit.setText(str(int(ce)))
+                    self.update_currep()
+                else:#Set upper threshold
+                        self.thwa[1] = np.percentile(self.indwa,(100-self.cper)/2)
+                        self.cper=50
+        
+        if np.isnan(np.sum(self.threm)): #setting REM thresholds
+            if np.isnan(self.threm[0]):#lower threshold
+                if np.round(self.score[self.currep])==2:#If last score was R, reduce percentile and ask again
+                    if self.cper==0:
+                        #All epochs rem
+                        self.thr[0]=0
+                        self.cper=50
+                    elif self.cper>1:
+                        self.cper=self.cper/2
+                    else:
+                        self.cper=0
+                    indp = np.where(self.indrem>np.percentile(self.indrem,self.cper))[0]
+                    ce =indp[np.argmin(self.indrem[indp])]
+                    self.ui.label_13.setText("Please score current epoch")
+                    self.ui.lineEdit.setText(str(int(ce)))
+                    self.update_currep()
+                else:#Set lower threshold
+                        self.thr[0] = np.percentile(self.indrem,self.cper/2)
+                        self.cper=50
+            else:
+                if self.score[self.currep]!=2:#If last score was not WA, increase percentile and ask again
+                    if self.cper==100:
+                        #No WA epochs
+                        self.thwr[1]=np.max(self.indrem)+1
+                        self.cper=50
+                    elif self.cper>1:
+                        self.cper+=((100-self.cper)/2)
+                    else:
+                        self.cper=100
+                    indp = np.where(self.indrem>np.percentile(self.indrem,self.cper))[0]
+                    ce =indp[np.argmin(self.indrem[indp])]
+                    self.ui.label_13.setText("Please score current epoch")
+                    self.ui.lineEdit.setText(str(int(ce)))
+                    self.update_currep()
+                else:#Set upper threshold
+                        self.thr[1] = np.percentile(self.indrem,(100-self.cper)/2)
+                        self.cper=50
+                
+            
+            ce = np.where(self.indw>np.percentile(indw,50))[0]
+            self.ui.label_13.setText("Please score current epoch")
+            self.ui.lineEdit.setText(str(int(ce)))
+            self.update_currep()
         return None
     def rescore(self):
         return None
     def stats(self):
+        plt.rcParams["font.family"] = "Arial"
+        plt.rcParams.update({'font.size': 14})
         #Displays mean fft per state ,mean BD, % time in each state and save csv file with score and power every 2 Hz
         indw = np.where(self.score==0)
         indnr = np.where(self.score==1)
         indr = np.where(self.score==2)
+        #First plot log FFT per state across all freqs
         plt.figure()
         if len(indw)>0:
             indw = indw[0]
@@ -711,7 +906,7 @@ class MyForm(QMainWindow):
         plt.legend()
         plt.show()
         #Plot again for selected freqs in linear scale
-        plt.figure(figsize=(12,9))
+        plt.figure(figsize=(15,11))
         plt.subplot(2,1,1)
         if len(indw)>0:
             fftw = np.mean(self.fftmat[indw,:],axis=0)
@@ -727,7 +922,7 @@ class MyForm(QMainWindow):
         plt.title('FFT by state',fontsize=18)
         plt.legend()
         #now BD and PT
-        bd = getbd(self.score)
+        bd = self.getbd(self.score)
         pt = getptime(self.score)
         plt.subplot(2,2,3)
         x_labels = ['WAKE', 'NREM', 'REM']
@@ -747,6 +942,129 @@ class MyForm(QMainWindow):
         plt.title('Percentage of time',fontsize=19)
         plt.tight_layout()
         plt.show()
+        #Save csv file with epoch num, Zt time, time, and FFT for each freq in 2 Hz bins
+        tick_values = np.arange(self.t0[0],self.t0[-1],4).astype(int) # set tick values to the x-coordinates of the data points
+        startt = time.gmtime(self.tstart.timestamp())
+        inits = startt.tm_hour*3600 + startt.tm_min * 60 + startt.tm_sec
+        difsec = inits
+        self.z0 = self.ui.timeEdit_3.time()
+        z0secs = self.z0.hour()*3600 + self.z0.minute() * 60 + self.z0.second()
+        difseczt0 = inits-z0secs
+        if difseczt0<0:
+            difseczt0 = 24*3600 + difseczt0
+        tickszt0 = [QtCore.QTime(int(np.floor(t/3600)), int((t%3600)//60), int((t%3600)%60)).addSecs(difseczt0).toString("hh:mm:ss") for t in tick_values]
+        ticks = [QtCore.QTime(int(np.floor(t/3600)), int((t%3600)//60), int((t%3600)%60)).addSecs(difsec).toString("hh:mm:ss") for t in tick_values]
+        neps=len(self.score)
+        if len(ticks)<neps:
+            #removing excess epochs
+            self.score = self.score[:len(ticks)]
+            neps=len(self.score)
+        cols = ['Time','ZT','Epoch','Score']
+        freqs = [str(f) for f in np.arange(1,np.floor(np.max(self.freqstats)))]
+        ffts = pd.DataFrame(columns=cols + freqs)
+        ffts['Epoch'] = 1+np.arange(len(self.score))
+        ffts['Time'] = ticks[0:neps]
+        ffts['ZT'] = tickszt0[:neps]
+        ffts['Score'] = pd.Series(self.score).apply(lambda x: self.dictsc[x])
+        for i,f in enumerate(np.arange(1,np.floor(np.max(self.freqstats)))):
+            f0 = int(np.where(self.freqstats>f-1)[0][0])
+            ff = int(np.where(self.freqstats>f)[0][0])
+            ffts[freqs[i]] = np.mean(self.fftstats[:neps,f0:ff],axis=1)
+        ffts.to_csv(self.fn[:-4]+'.csv',index=False)
+        print(self.fn[:-4]+'.csv Saved')
+
+        #Now show sleep arch for each ZT hour: for each state: N bouts, % time, BD, mean power
+        
+        statsdic = {'ZT':[], 'WBD':[],'NRBD':[],'RBD':[], 'NW':[],'NNR':[],'NR':[],'PTW':[],'PTNR':[],'PTR':[],
+                                          'PW':[],'PNR':[],'PR':[]}
+        #Find first and last epoch within integer part of ZT
+        mincol = ffts['ZT'].apply(lambda x: x[3:5]).values
+        fe = np.where(mincol=='00')[0][0] #first epoch
+        nepsph = 3600//self.epochl
+        nh = (neps-fe)//nepsph #Number of hours
+        le = fe + nh * nepsph #last epoch
+        #Compute stats for every ZT hour
+        for ep in np.arange(fe,le+1,nepsph):
+            indw = np.where(self.score[ep:ep+nepsph]==0)
+            indnr = np.where(self.score[ep:ep+nepsph]==1)
+            indr = np.where(self.score[ep:ep+nepsph]==2)
+            if len(indw)>0:
+                indw = indw[0]
+                fftw = np.mean(self.fftstats[indw,:],axis=0)
+            else:
+                indw=[]
+                fftw = np.zeros(self.fftstats.shape[1])
+            if len(indnr)>0:
+                indnr = indnr[0]
+                fftnr = np.mean(self.fftstats[indnr,:],axis=0)
+            else:
+                indnr=[]
+                fftnr = np.zeros(self.fftstats.shape[1])
+            if len(indr)>0:
+                indr = indr[0]
+                fftr = np.mean(self.fftstats[indr,:],axis=0)
+            else:
+                indnr=[]
+                fftr = np.zeros(self.fftstats.shape[1])
+            statsdic['ZT'].append(ffts['ZT'].values[ep+1][0:2])#ZT hour
+            statsdic['PW'].append(fftw)
+            statsdic['PNR'].append(fftnr)
+            statsdic['PR'].append(fftr)
+            bd = self.getbd(self.score[ep:ep+nepsph])
+            pt = getptime(self.score[ep:ep+nepsph])
+            statsdic['WBD'].append(bd[0])
+            statsdic['NRBD'].append(bd[1])
+            statsdic['RBD'].append(bd[2])
+            statsdic['PTW'].append(pt[0])
+            statsdic['PTNR'].append(pt[1])
+            statsdic['PTR'].append(pt[2])
+            w = getbouts(self.score[ep:ep+nepsph],0)
+            w=w[w>=3]
+            statsdic['NW'].append(len(w))
+            nr = getbouts(self.score[ep:ep+nepsph],1)
+            nr=nr[nr>=3]
+            statsdic['NNR'].append(len(nr))
+            r = getbouts(self.score[ep:ep+nepsph],2)
+            r=r[r>=3]
+            statsdic['NR'].append(len(r))
+        hourlysts = pd.DataFrame(statsdic)
+        #Save and plot
+        hourlysts.to_csv(self.fn[:-4]+'hrly_stats.csv',index=False)
+        print(self.fn[:-4]+'hrly_stats.csv Saved')
+        #For frequency bands, a baseline power needs to be computed so skipping that
+        plt.figure(figsize=(15,4))
+        plt.subplot(1,3,1)
+        plt.plot(hourlysts['ZT'].values,hourlysts['WBD'].values,'o-',color='#50C878',label='WAKE')
+        plt.plot(hourlysts['ZT'].values,hourlysts['NRBD'].values,'o-',color='#4169E1',label='NREM')
+        plt.plot(hourlysts['ZT'].values,hourlysts['RBD'].values,'o-',color='#FF6347',label='REM')
+        plt.title('Bout Duration',fontsize=19)
+        plt.xlabel('ZT',fontsize=15)
+        plt.ylabel('Duration (Min.)',fontsize=15)
+        plt.subplot(1,3,2)
+        plt.plot(hourlysts['ZT'].values,hourlysts['PTW'].values,'o-',color='#50C878',label='WAKE')
+        plt.plot(hourlysts['ZT'].values,hourlysts['PTNR'].values,'o-',color='#4169E1',label='NREM')
+        plt.plot(hourlysts['ZT'].values,hourlysts['PTR'].values,'o-',color='#FF6347',label='REM')
+        plt.title('Percentage Time',fontsize=19)
+        plt.xlabel('ZT',fontsize=15)
+        plt.ylabel('(%)',fontsize=15)
+        plt.legend()
+        plt.subplot(1,3,3)
+        plt.plot(hourlysts['ZT'].values,hourlysts['NW'].values,'o-',color='#50C878',label='WAKE')
+        plt.plot(hourlysts['ZT'].values,hourlysts['NNR'].values,'o-',color='#4169E1',label='NREM')
+        plt.plot(hourlysts['ZT'].values,hourlysts['NR'].values,'o-',color='#FF6347',label='REM')
+        plt.title('Number of Bouts',fontsize=19)
+        plt.xlabel('ZT',fontsize=15)
+        plt.ylabel('N',fontsize=15)
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+
+            
+
+
+
+
+
 
         return None
     def undo(self):
@@ -938,8 +1256,6 @@ class MyForm(QMainWindow):
         for x in indxb1:
             self.fftl.append(plotCanvFFT.plot([x,x], [0,ylim], pen='k'))
         
-
-
     def loadEDF(self):#read the EDF
         fileName = QFileDialog.getOpenFileName(self, 'Open EDF with sync data', '.', "EDF files (*.edf)")
         print(fileName)
@@ -1061,136 +1377,6 @@ class MyForm(QMainWindow):
         self.ui.label_13.setText("Ready")
         self.scoredict = {'score': self.score, 'zt0': self.ui.timeEdit_3.time(), 't0': self.ui.dateTimeEdit_2.dateTime(), 'el': 4}
 
-    # def saveAll(self): #this is from ca imager
-    #     #making data frame with the Z scores of ever cell for every state, assuming 1 period
-    #     #For each cell we need a table with the Zscore of an epoch and it's state
-    #     mat_aux=[]
-    #     k0=1
-    #     lstate = ['Wake'] * len(self.activityW[1, :]) + ['NREM'] * len(self.activityN[1, :]) + ['REM'] * len(
-    #         self.activityR[1, :])
-    #     #there can be statistical differences due to larger than the rest or smaller than the rest activity
-    #     wakeL =[]
-    #     nremL = []
-    #     remL = []
-    #     wakeS = []
-    #     nremS = []
-    #     remS = []
-    #     indep = []
-    #     faL=[]
-    #     oaL=[]
-    #     faS=[]
-
-    #     lfwa1 = int(len(self.fwa)/2)
-    #     lowa1 = int(len(self.owa)/2)
-    #     for n in range(self.Ncells):
-    #         lact=list(self.activityW[n,:]) + list(self.activityN[n,:])+list(self.activityR[n,:])
-
-    #         #lstate = ('WAKE ' * len(self.activityW)).split()+ ('NREM ' * len(self.activityN)).split() + ('REM ' * len(self.activityR)).split()
-    #         F, p = stats.f_oneway(self.activityW[n,:],self.activityN[n,:],self.activityR[n,:])
-    #         #print(self.activityW[n,:].mean(),self.activityN[n,:].mean(),self.activityR[n,:].mean())
-    #         if p<0.05:
-    #             print("Significant! N=",k0)
-    #             k0+=1
-    #             if (self.activityW[n,:].mean()>self.activityN[n,:].mean()) and (self.activityW[n,:].mean()>self.activityR[n,:].mean()):
-    #                 wakeL.append(n)
-    #             elif (self.activityW[n,:].mean()<self.activityN[n,:].mean()) and (self.activityW[n,:].mean()<self.activityR[n,:].mean()):
-    #                 wakeS.append(n)
-    #             elif (self.activityN[n,:].mean()<self.activityW[n,:].mean()) and (self.activityN[n,:].mean()<self.activityR[n,:].mean()):
-    #                 nremS.append(n)
-    #             elif (self.activityN[n,:].mean()>self.activityW[n,:].mean()) and (self.activityN[n,:].mean()>self.activityR[n,:].mean()):
-    #                 nremL.append(n)
-    #             elif (self.activityR[n,:].mean()<self.activityW[n,:].mean()) and (self.activityR[n,:].mean()<self.activityN[n,:].mean()):
-    #                 remS.append(n)
-    #             elif (self.activityR[n,:].mean()>self.activityW[n,:].mean()) and (self.activityR[n,:].mean()>self.activityN[n,:].mean()):
-    #                 remL.append(n)
-    #         else:
-    #             indep.append(n)
-    #         F, p1 = stats.f_oneway(self.fwa[n,0:lfwa1],self.owa[n,0:lowa1]) # Checking only the first half ogf the data
-    #         F, p2 = stats.f_oneway(self.fwa[n, lfwa1:],
-    #                                self.owa[n, lowa1:])  # Checking only the second half ogf the data
-    #         if (p1<0.05) and (p2<0.05):
-    #             if (self.fwa[n,0:lfwa1].mean()>self.owa[n,0:lowa1].mean()) and (self.fwa[n,lfwa1:].mean()>self.owa[n,lowa1:].mean()):
-    #                 faL.append(n) #saves the number of the cell that has higher activity at the onset of W
-    #             else:
-    #                 faS.append(n)
-    #         else:
-    #             oaL.append(n)
-    #     print("percentage of active cells at onset: ",100*len(faL)/self.Ncells)
-    #     print("percentage of less active cells at onset: ", 100 * len(faS) / self.Ncells)
-    #     print("percentage of cells indifferent to onset: ", 100 * len(oaL) / self.Ncells)
-    #     mixed = wakeS +nremS +remS
-    #     if len(wakeL +nremL +remL +mixed +indep ) != self.Ncells:
-    #         print("missing cells!!")
-    #     #Making final figure with traces and hypnogram, jellybeans and pie chart
-    #     labels =[]
-    #     sizes =[]
-    #     explode = []
-    #     colors =[]
-    #     colorlist = 'g', 'r', 'b', (0.5,0.5,0.5), 'y'
-    #     labellist = 'W', 'R', 'NR', 'Mixed', 'Ind'
-    #     i=0
-    #     for m in [wakeL,remL, nremL, mixed,indep]:
-    #         if len(m)>0:
-    #             labels.append(labellist[i])
-    #             sizes.append(100*len(m)/self.Ncells)
-    #             explode.append(0)
-    #             colors.append(colorlist[i])
-    #         i+=1
-
-    #     #To do: add first vs other activity during W
-    #     #self.foa
-
-    #     #making summary figure with jellybeans,
-    #     fig=plt.figure()
-    #     grid = plt.GridSpec(2, 3, wspace=0.0, hspace=0.1)
-    #     plt.subplot(grid[0, 0])
-    #     plt.imshow(self.mat2plot)
-    #     plt.axis("off")
-    #     plt.draw()
-    #     ax1 = plt.subplot(grid[0, 1])
-    #     ax1.pie(sizes, explode=explode, labels=labels, colors=colors, autopct='%1.1f%%',
-    #             shadow=False, textprops={'size': 'x-large', 'weight':'bold'}, startangle=90)
-    #     ax1.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
-    #     ax=plt.subplot(grid[0, 2]) #plotting bar plot with the difference in activity for cells who had larger activity during hte first W bout
-    #     meanw,meann,meanr = self.activityW.mean(axis=1), self.activityN.mean(axis=1),self.activityR.mean(axis=1) #mean activity for every cell
-    #     error = [(0,0,0),[stats.sem(meanw),stats.sem(meann), stats.sem(meanr)]]
-    #     bp=plt.bar([0,1,2], [meanw.mean(),meann.mean(),meanr.mean()],
-    #                yerr=error,align='center',alpha=1, ecolor='k',capsize=5)
-    #     plt.xticks([0, 1,2], ('WAKE', 'NREM','REM'))
-    #     plt.ylabel('Mean Z score')
-    #     bp[0].set_color('g')
-    #     bp[1].set_color('b')
-    #     bp[2].set_color('r')
-
-    #     # plt.bar([0,1],[self.fwa[faL, :].mean(), self.owa[faL, :].mean()])
-    #     # plt.xticks([0,1], ('Onset W', 'Within W'))
-    #     ax.spines['right'].set_visible(False)
-    #     ax.spines['top'].set_visible(False)
-    #     plt.tight_layout()
-    #     #plt.box(on=None)
-    #     ax = plt.subplot(grid[1, 0:])
-    #     #now plotting hypnogram and traces
-    #     tscore =[t*self.epochl for t in range(len(self.chunk_score))]
-    #     taxis = (np.arange(self.nframes)) / self.sr
-    #     plt.plot(tscore[3:], self.chunk_score[3:]*4.5)
-    #     indxt = list(range(self.Ncells))
-    #     random.shuffle(indxt)
-    #     traceindx = indxt[0:8]
-    #     for i in range(len(traceindx)):
-    #         plt.plot(taxis[int(self.sr*12):], self.Traces[i,int(self.sr*12):].T + 10 * (i+1),linewidth=0.5)
-    #     ax.spines['right'].set_visible(False)
-    #     ax.spines['top'].set_visible(False)
-    #     ax.spines['left'].set_visible(False)
-    #     ax.tick_params(left=False)
-    #     ax.tick_params(labelleft=False)
-    #     #plt.box(on=None)
-    #     #ax.set_frame_on(False)
-    #     #ax.add_axes([0., 1., 1., 0])
-    #     #ax = plt.axes([0, 1., 0, 1.])
-    #     #ax.get_xaxis().set_visible(True)
-    #     #ax.get_yaxis().set_visible(False)
-    #     plt.show()
-
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Q.value:
             print("Going to the next NREM epoch...")
@@ -1205,9 +1391,7 @@ class MyForm(QMainWindow):
             if (self.currep + self.neps) < (self.maxep):
                 self.ui.lineEdit.setText(str(int(self.currep + self.neps-1)))
                 self.update_currep()
-
             else:
-
                 self.ui.lineEdit.setText(str(int(self.maxep-self.halfneps)))
                 self.update_currep()
 
@@ -1221,7 +1405,7 @@ class MyForm(QMainWindow):
                 self.update_currep()
                 # Scoring
         if event.key() == Qt.Key.Key_0.value:
-            self.score[self.currep] = 0
+            self.score[self.cur0rep] = 0
             if self.currep < self.maxep:
                 self.ui.lineEdit.setText(str(int(min([self.currep + 1,self.maxep-1]))))
             self.update_currep()
@@ -1250,6 +1434,41 @@ class MyForm(QMainWindow):
             if self.currep <self.maxep:
                 self.ui.lineEdit.setText(str(int(min([self.currep + 1,self.maxep-1]))))
             self.update_currep()
+        if event.key() == Qt.Key.Key_3.value:
+            self.score[self.currep] = 3
+            if self.currep <self.maxep:
+                self.ui.lineEdit.setText(str(int(min([self.currep + 1,self.maxep-1]))))
+            self.update_currep()
+        if event.key() == Qt.Key.Key_Period.value:
+            self.score[self.currep] = 3
+            if self.currep <self.maxep:
+                self.ui.lineEdit.setText(str(int(min([self.currep + 1,self.maxep-1]))))
+            self.update_currep()
+        if event.key() == Qt.Key.Key_2.value:
+            self.score[self.currep] = 3.1
+            if self.currep <self.maxep:
+                self.ui.lineEdit.setText(str(int(min([self.currep + 1,self.maxep-1]))))
+            self.update_currep()
+        if event.key() == Qt.Key.Key_Comma.value:
+            self.score[self.currep] = 3.1
+            if self.currep <self.maxep:
+                self.ui.lineEdit.setText(str(int(min([self.currep + 1,self.maxep-1]))))
+            self.update_currep()
+        if (event.key() == Qt.Key.Key_4.value) or(event.key() == Qt.Key.Key_S.value):
+            self.score[self.currep] = 4
+            if self.currep <self.maxep:
+                self.ui.lineEdit.setText(str(int(min([self.currep + 1,self.maxep-1]))))
+            self.update_currep()
+        if event.key() == Qt.Key.Key_Semicolon.value:
+            self.score[self.currep] = -1
+            if self.currep <self.maxep:
+                self.ui.lineEdit.setText(str(int(min([self.currep + 1,self.maxep-1]))))
+            self.update_currep()
+        if (event.key() == Qt.Key.Key_6.value):
+            self.score[self.currep] = -1
+            if self.currep <self.maxep:
+                self.ui.lineEdit.setText(str(int(min([self.currep + 1,self.maxep-1]))))
+            self.update_currep()
         #same for normal keyboard in case there is no numpad:
         if event.key() == Qt.Key.Key_M.value:
             self.score[self.currep] = 0
@@ -1266,6 +1485,11 @@ class MyForm(QMainWindow):
             if self.currep <self.maxep:
                 self.ui.lineEdit.setText(str(int(min([self.currep + 1,self.maxep-1]))))
             self.update_currep()
+        if event.key() == Qt.Key.Key_U.value:
+            self.score[self.currep] = 1.1
+            if self.currep <self.maxep:
+                self.ui.lineEdit.setText(str(int(min([self.currep + 1,self.maxep-1]))))
+            self.update_currep()
         
         if event.key() == Qt.Key.Key_I.value:
             self.score[self.currep] = 2.1
@@ -1277,9 +1501,10 @@ class MyForm(QMainWindow):
             if self.currep <self.maxep:
                 self.ui.lineEdit.setText(str(int(min([self.currep + 1,self.maxep-1]))))
             self.update_currep()
+        
         #jumps to next non scored epoch
         if event.key() == Qt.Key.Key_N.value:
-            lnz = np.where(self.score[self.currep:] < 0)[0][0]+self.currep
+            lnz = np.where(self.score[self.currep:] < 0)[0][0]+self.currep+1
             self.currep = lnz
             self.ui.lineEdit.setText(str(int(min([self.currep - 1, self.maxep - 1]))))
             self.update_currep()
@@ -1303,14 +1528,7 @@ class MyForm(QMainWindow):
             self.ui.lineEdit.setText(str(int(self.currep)))
             self.ui.lineEdit.setText(str(int(self.currep)))
             self.update_currep()
-        if event.key() == Qt.Key.Key_U.value:
-            c1 = self.score[self.currep:] <0
-            c2 = self.score[self.currep:] > 3
-            self.currep = np.argwhere(c1 | c2)[0] + self.currep
-            self.ui.lineEdit.setText(str(int(self.currep)))
-            self.ui.lineEdit.setText(str(int(self.currep)))
-            self.update_currep()
-
+        
 if __name__=="__main__":
     app = QApplication(sys.argv)
     w = MyForm()
