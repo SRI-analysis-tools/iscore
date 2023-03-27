@@ -6,8 +6,9 @@ pyqtgraph==0.12.3
 qtconsole==5.2.2
 QtPy==2.0.0
 matplotlib==3.5.1
-scipy
+scipy==1.10.0
 mne
 h5py
 EDFlib-Python
-scikit-learn=1.2.2=pypi_0
+scikit-learn==1.2.2=pypi_0
+pandas==1.5.3
