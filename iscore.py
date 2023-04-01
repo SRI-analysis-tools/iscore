@@ -305,7 +305,7 @@ class Ui_MainWindow(object):
         self.checkBox_6.setObjectName("checkBox_6")
         self.pushButton_20 = QtWidgets.QPushButton(parent=self.centralwidget)
         self.pushButton_20.setGeometry(QtCore.QRect(770, 960, 86, 31))
-        self.pushButton_20.setText("")
+        self.pushButton_20.setText("Apply Notch")
         self.pushButton_20.setObjectName("pushButton_20")
         self.pushButton_21 = QtWidgets.QPushButton(parent=self.centralwidget)
         self.pushButton_21.setGeometry(QtCore.QRect(590, 960, 86, 31))

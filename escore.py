@@ -30,7 +30,7 @@ from collections import defaultdict
 import h5py
 import mne
 # from xml.dom import minidom
-import scipy.signal
+from scipy import signal
 from scipy import stats
 # import cv2
 import matplotlib.pyplot as plt
@@ -159,6 +159,7 @@ class MyForm(QMainWindow):
         self.ui.pushButton_14.clicked.connect(self.restoreEEG_scale)
         self.ui.pushButton_15.clicked.connect(self.restoreEMG_scale)
         self.ui.pushButton_19.clicked.connect(self.closeap)
+        self.ui.pushButton_20.clicked.connect(self.apply_notch)
         self.ui.pushButton_22.clicked.connect(self.help)
         self.ui.horizontalScrollBar.valueChanged.connect(self.scrollbar_moved)
         self.ui.epoch_length.valueChanged.connect(self.val_ch_epl)
@@ -216,6 +217,7 @@ class MyForm(QMainWindow):
         self.thnr = [np.nan, np.nan]
         self.thr = [np.nan, np.nan]
         self.thwa = [np.nan, np.nan]
+        self.notch_applied=False
 
         # now def all the functions
     def val_ch_epl(self):
@@ -265,6 +267,24 @@ class MyForm(QMainWindow):
         </table></html></font>')
         msg_box.exec()
         return None
+    def apply_notch(self):
+        if ~self.notch_applied:
+            # Apply 60 Hz notch filter to EEG and EMG
+            f0 = 60.0
+            Q = 100
+            # Calculate the notch filter coefficients using a second-order Butterworth filter
+            w0 = f0 / (self.sr / 2)
+            b, a = signal.iirnotch(w0, Q)
+            # Apply the filter to the signals array
+            signal_array = self.edfmat[self.ui.EEGch.value() - 1, :]
+            self.edfmat[self.ui.EEGch.value() - 1, :] = signal.filtfilt(b, a, signal_array)
+            signal_array = self.edfmat[self.ui.EMGch.value() - 1, :]
+            self.edfmat[self.ui.EMGch.value() - 1, :] = signal.filtfilt(b, a, signal_array)
+            self.preprocessing()
+            self.ui.label_13.setText("Notch filter applied")
+            self.notch_applied=True
+        return None
+
 
     def update_epl(self):
         self.ui.label_13.setText("Recalculating...")
@@ -289,7 +309,7 @@ class MyForm(QMainWindow):
         pos0 = np.argmin(np.abs(self.freqs))
         posmax = np.argmin(np.abs(self.freqs - self.ui.maxF.value()))
         self.fftmat = self.fftmat[:, pos0:posmax]
-        self.freqs = self.freqs[pos0:posmax]
+        self.freqsp = self.freqs[pos0:posmax]
 
         self.neps = self.tracel // self.epochl  # epochs per page
         self.halfneps = self.neps // 2
@@ -319,7 +339,7 @@ class MyForm(QMainWindow):
                                      self.neps:self.maxep, :].flatten()
         else:
             fft2pl = self.fftmat[0:2 * self.halfneps, :].flatten()
-        faxis = list(self.freqs) * (2 * self.halfneps)
+        faxis = list(self.freqsp) * (2 * self.halfneps)
         # print(type(fft2pl))
         # print(len(fft2pl),len(faxis))
         indx = np.arange(len(fft2pl))
@@ -332,7 +352,7 @@ class MyForm(QMainWindow):
         else:
             ylim = np.max(fft2pl)
         plotCanvFFT.setYRange(0, ylim, padding=0)
-        indxb1 = indx[faxis == list(self.freqs)[0]]
+        indxb1 = indx[faxis == list(self.freqsp)[0]]
         for x in indxb1:
             plotCanvFFT.plot([x, x], [0, ylim], pen='k')
         ax = plotCanvFFT.getAxis('bottom')
@@ -361,7 +381,7 @@ class MyForm(QMainWindow):
         self.emgtype = self.ui.listWidget_2.row(item)
 
         if self.emgtype == 2:
-            self.emg = scipy.signal.medfilt(
+            self.emg = signal.medfilt(
                 self.edfmat[self.ui.EMGch.value() - 1, :], 5)
         if self.emgtype == 0:
             self.emg = self.edfmat[self.ui.EMGch.value() - 1, :]
@@ -1032,13 +1052,13 @@ class MyForm(QMainWindow):
         plt.subplot(2, 1, 1)
         if len(indw) > 0:
             fftw = np.mean(self.fftmat[indw, :], axis=0)
-            plt.plot(self.freqs, fftw, '#50C878', label='W')
+            plt.plot(self.freqsp, fftw, '#50C878', label='W')
         if len(indnr) > 0:
             fftnr = np.mean(self.fftmat[indnr, :], axis=0)
-            plt.plot(self.freqs, fftnr, '#4169E1', label='NR')
+            plt.plot(self.freqsp, fftnr, '#4169E1', label='NR')
         if len(indr) > 0:
             fftr = np.mean(self.fftmat[indr, :], axis=0)
-            plt.plot(self.freqs, fftr, '#FF6347', label='REM')
+            plt.plot(self.freqsp, fftr, '#FF6347', label='REM')
         plt.ylabel(' |FFT| ($V$)', fontsize=15)
         plt.xlabel('Frequency (Hz)', fontsize=15)
         plt.title('FFT by state', fontsize=18)
@@ -1093,7 +1113,7 @@ class MyForm(QMainWindow):
                 1, np.floor(
                     np.max(
                         self.freqstats)))]
-        ffts = pd.DataFrame(columns=cols + freqs)
+        ffts = pd.DataFrame(columns=cols + self.freqsp)
         ffts['Epoch'] = 1 + np.arange(len(self.score))
         ffts['Time'] = ticks[0:neps]
         ffts['ZT'] = tickszt0[:neps]
@@ -1293,7 +1313,7 @@ class MyForm(QMainWindow):
         window = np.ones(int(window_size)) / float(window_size)
 
         delta = np.mean(self.fftstats[:, deltafr], axis=1)
-        gamma = scipy.signal.medfilt(
+        gamma = signal.medfilt(
             np.mean(self.fftstats[:, gammafr], axis=1))
         gammarem = np.mean(self.fftstats[:, gammarem], axis=1)
         gammaw = np.mean(self.fftstats[:, gammaw], axis=1)
@@ -1423,7 +1443,7 @@ class MyForm(QMainWindow):
         #     mt2p = mt2p **2
 
         # if self.ui.listWidget_2.currentRow() == 2:
-        #     mt2p = scipy.signal.medfilt(mt2p,5)
+        #     mt2p = signal.medfilt(mt2p,5)
         plotCanvMT.plot(self.t0[fp:lp], mt2p, pen='k')
         plotCanvMT.setXRange(self.t0[fp], self.t0[lp], padding=0)
         if self.ui.checkBox_4.isChecked():
@@ -1466,6 +1486,8 @@ class MyForm(QMainWindow):
         self.fftl = []
         for x in indxb1:
             self.fftl.append(plotCanvFFT.plot([x, x], [0, ylim], pen='k'))
+        self.ui.label_13.setText("Ready")
+        
 
     def loadEDF(self):  # read the EDF
         fileName = QFileDialog.getOpenFileName(
@@ -1514,40 +1536,28 @@ class MyForm(QMainWindow):
             print('Max eps:', self.maxep)
             self.tracel = self.ui.epoch_length_2.value()
             self.edfmat = np.asarray(edf.get_data())
-            npep = int(self.epochl * self.sr)
+            self.npep = int(self.epochl * self.sr)
 
-            leeg = len(self.edfmat[0, :])
+            self.leeg = len(self.edfmat[0, :])
             print("Calculating FFT from channel", self.ui.EEGch.value())
-            print("last EEG point:", npep * (leeg // npep))
+            print("last EEG point:", self.npep * (self.leeg // self.npep))
             # self.edfmat[sch, fp:lp], pen=c[p])
             self.eegmat = self.edfmat[self.ui.EEGch.value(
-            ) - 1, 0:npep * (leeg // npep)].reshape(leeg // npep, npep)
-            print(np.shape(self.eegmat))
+            ) - 1, 0:self.npep * (self.leeg // self.npep)].reshape(self.leeg // self.npep, self.npep)
+            print('Shape EEGmat:',np.shape(self.eegmat))
             self.fftmat = np.zeros(np.shape(self.eegmat))
-            self.freqs = np.fft.fftfreq(npep, 1 / self.sr)
+            self.freqs = np.fft.fftfreq(self.npep, 1 / self.sr)
             self.score = -1 * np.ones(self.maxep)
             self.emg = self.edfmat[self.ui.EMGch.value() - 1, :]
-            for epoch in range(leeg // npep):
-                self.fftmat[epoch, :] = np.abs(
-                    np.fft.fft(self.eegmat[epoch, :]))
-                # We only one the freqs between 0 and the max freq FFT
-
-            # now finding the pos of the 0 and maxfrec
-            pos0 = np.argmin(np.abs(self.freqs))
-            posmax = np.argmin(np.abs(self.freqs - self.ui.maxF.value()))
-            posp = np.where(self.freqs >= 0)[0]
-            self.fftstats = self.fftmat[:, posp].copy()
-            self.freqstats = self.freqs[posp].copy()
-            self.fftmat = self.fftmat[:, pos0:posmax]
-            self.freqs = self.freqs[pos0:posmax]
-            self.neps = self.tracel // self.epochl  # epochs per page
-            self.halfneps = self.neps // 2
+            
+            self.preprocessing()
             # current time, start date, end date, start time, end time, scroll
             # bar settings
             self.selchan2p.append(0)
-            for n in edf.info["ch_names"]:
+            for n in self.edf.info["ch_names"]:
                 self.ui.listWidget.addItem(n)
             self.ui.listWidget.setCurrentRow(0)
+            print('Shape fftstats:',np.shape(self.fftstats))
             print('Ready!')
             self.update_plots()
         else:
@@ -1615,6 +1625,27 @@ class MyForm(QMainWindow):
             'zt0': self.ui.timeEdit_3.time(),
             't0': self.ui.dateTimeEdit_2.dateTime(),
             'el': 4}
+
+    def preprocessing(self):
+        self.fftmat = np.zeros(np.shape(self.eegmat))
+        for epoch in range(self.leeg // self.npep):
+            self.fftmat[epoch, :] = np.abs(
+                np.fft.fft(self.eegmat[epoch, :]))
+            # We only one the freqs between 0 and the max freq FFT
+
+        # now finding the pos of the 0 and maxfrec
+        pos0 = np.argmin(np.abs(self.freqs))
+        posmax = np.argmin(np.abs(self.freqs - self.ui.maxF.value()))
+        posp = np.where(self.freqs >= 0)[0]
+        self.fftstats = self.fftmat[:, posp].copy()
+        print('Shape fftstats:',np.shape(self.fftstats))
+        self.freqstats = self.freqs[posp].copy()
+        self.fftmat = self.fftmat[:, pos0:posmax]
+        self.freqsp = self.freqs[pos0:posmax]
+        self.neps = self.tracel // self.epochl  # epochs per page
+        self.halfneps = self.neps // 2
+        
+        
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Q.value:
