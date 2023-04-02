@@ -571,20 +571,18 @@ class MyForm(QMainWindow):
         self.ui.label_13.setText("Computing Features...")
         np2sep = int(np.floor(2 * self.sr))  # Number of points in 2 s epochs
         eegmat2s = self.edfmat[self.ui.EEGch.value() -
-                               1, 0:np2sep *
-                               (self.edfmat.shape[1] //
-                                np2sep)].reshape(self.edfmat.shape[1] //
-                                                 np2sep, np2sep)
+                               1, 0:np2sep *int(self.epochl/2)*len(self.score)].reshape(-1,np2sep)
+                            
         emgmat2s = self.edfmat[self.ui.EMGch.value() -
-                               1, 0:np2sep *
-                               (self.edfmat.shape[1] //
-                                np2sep)].reshape(self.edfmat.shape[1] //
-                                                 np2sep, np2sep)
+                               1, 0:np2sep *int(self.epochl/2)*len(self.score)].reshape(-1, np2sep)
+        #    (self.edfmat.shape[1] //
+        #     np2sep)].reshape(self.edfmat.shape[1] //
+        #                      np2sep, np2sep)
         freqs2s = np.fft.fftfreq(np2sep, 1 / self.sr)
         indx = np.where(freqs2s >= 0)[0]
         fftmat2s = np.zeros((eegmat2s.shape[0], len(indx)))
         freqs2s = freqs2s[indx]
-        for epoch in range(eegmat2s.shape[0]):
+        for epoch in range(len(self.score)*int(self.epochl/2)):
             fftmat2s[epoch, :] = np.abs(np.fft.fft(eegmat2s[epoch, :]))[indx]
         # GEt features:
         # 1- Power bands
@@ -1597,7 +1595,7 @@ class MyForm(QMainWindow):
                                      self.neps:self.maxep, :].flatten()
         else:
             fft2pl = self.fftmat[0:2 * self.halfneps, :].flatten()
-        faxis = list(self.freqs) * (2 * self.halfneps)
+        faxis = list(self.freqsp) * (2 * self.halfneps)
         # print(type(fft2pl))
         # print(len(fft2pl),len(faxis))
         indx = np.arange(len(fft2pl))
@@ -1610,7 +1608,7 @@ class MyForm(QMainWindow):
         else:
             ylim = np.max(fft2pl)
         plotCanvFFT.setYRange(0, ylim, padding=0)
-        indxb1 = indx[faxis == list(self.freqs)[0]]
+        indxb1 = indx[faxis == list(self.freqsp)[0]]
         for x in indxb1:
             plotCanvFFT.plot([x, x], [0, ylim], pen='k')
         ax = plotCanvFFT.getAxis('bottom')
