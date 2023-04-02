@@ -569,7 +569,7 @@ class MyForm(QMainWindow):
         # bands:0-4, 6-10, 125-135, 285-295
         # Adding 2s epoch FFT
         self.ui.label_13.setText("Computing Features...")
-        np2sep = int(2 * self.sr)  # Number of points in 2 s epochs
+        np2sep = int(np.floor(2 * self.sr))  # Number of points in 2 s epochs
         eegmat2s = self.edfmat[self.ui.EEGch.value() -
                                1, 0:np2sep *
                                (self.edfmat.shape[1] //
@@ -727,6 +727,7 @@ class MyForm(QMainWindow):
             # Trim last epoch if it is not even
             self.autoscore = self.autoscore[:-1]
         autos = self.autoscore.reshape(-1, 2)
+        print('autos shape:',autos.shape,' score shape:',self.score.shape)
         for e in range(autos.shape[0] - 1):
             if np.min(autos[e, :]) >= 0:
                 # If any one is WA, score as WA
@@ -762,7 +763,7 @@ class MyForm(QMainWindow):
                                         self.score[e - 1]) + 0.1
                         else:
                             self.score[e] = mode(np.hstack(
-                                autos[e, :], autos[e + 1, :])).mode[0]
+                                [autos[e, :], autos[e + 1, :]]),keepdims=False)[0][0]
         # replace all NR that have low delta and high tethad by R if there is a R epoch nearby
         # Convert 2s vectors into 4s
         delta4 = halve(self.delta)
@@ -1500,23 +1501,22 @@ class MyForm(QMainWindow):
             os.chdir(fileName.rsplit('/', 1)[0])
             self.ui.label_5.setText(fileName)
             self.ui.label_13.setText("Reading EDF...")
-            edf = mne.io.read_raw_edf(
+            self.edf = mne.io.read_raw_edf(
                 fileName, preload=True, stim_channel=None)
-            self.edf = edf
-            self.sr = float(edf.info["sfreq"])
+            self.sr = float(self.edf.info["sfreq"])
             # getting start and end time as tuple
-            if isinstance(edf.info["meas_date"], tuple):
-                self.tstart = time.gmtime(edf.info["meas_date"][0])
+            if isinstance(self.edf.info["meas_date"], tuple):
+                self.tstart = time.gmtime(self.edf.info["meas_date"][0])
             else:
-                if type(edf.info["meas_date"]) == datetime.datetime:
-                    self.tstart = edf.info["meas_date"]
+                if type(self.edf.info["meas_date"]) == datetime.datetime:
+                    self.tstart = self.edf.info["meas_date"]
                 else:
                     # print(edf.info["meas_date"],type(edf.info["meas_date"]))
-                    self.tstart = time.gmtime(edf.info["meas_date"])
+                    self.tstart = time.gmtime(self.edf.info["meas_date"])
 
             # dt2 = time.gmtime(time.mktime(self.tstart)+edf.times[-1])
-            dt2 = time.gmtime(self.tstart.timestamp() + edf.times[-1])
-            print("Duration:", edf.times[-1])
+            dt2 = time.gmtime(self.tstart.timestamp() + self.edf.times[-1])
+            print("Duration:", self.edf.times[-1])
             # formating time
             self.ui.label_8.setText(
                 "Start date:" +
@@ -1530,14 +1530,20 @@ class MyForm(QMainWindow):
                     "%m/%d/%Y %H:%M:%S ",
                     dt2))
             # print(edf.info["meas_date"][1])
-            self.t0 = edf.times  # In seconds since start?
+            self.t0 = self.edf.times  # In seconds since start?
             self.totalp = len(self.t0)
-            self.maxep = int(edf.times[-1] // self.epochl)
+            self.maxep = int(self.edf.times[-1] // self.epochl)
             print('Max eps:', self.maxep)
             self.tracel = self.ui.epoch_length_2.value()
-            self.edfmat = np.asarray(edf.get_data())
-            self.npep = int(self.epochl * self.sr)
-
+            self.edfmat = np.asarray(self.edf.get_data())
+            #Select only the integer multiple of the epoch length
+            dur01 = self.edfmat.shape[1] /self.sr
+            adj_dur = self.epochl*(dur01//self.epochl)
+            neps = adj_dur//self.epochl
+            self.npep = int(np.floor(self.epochl * self.sr))
+            totalpts01 =int(np.round(neps * self.npep))
+            #totalpts01 = int(np.ceil(adj_dur * self.sr))
+            self.edfmat = self.edfmat[:,:totalpts01]
             self.leeg = len(self.edfmat[0, :])
             print("Calculating FFT from channel", self.ui.EEGch.value())
             print("last EEG point:", self.npep * (self.leeg // self.npep))
@@ -1559,7 +1565,7 @@ class MyForm(QMainWindow):
             self.ui.listWidget.setCurrentRow(0)
             print('Shape fftstats:',np.shape(self.fftstats))
             print('Ready!')
-            self.update_plots()
+            #self.update_plots()
         else:
             print("No File selected")
         # newdt = time.gmtime(time.mktime(self.tstart) + self.t)
