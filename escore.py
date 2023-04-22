@@ -162,7 +162,7 @@ class MyForm(QMainWindow):
         self.ui.pushButton_20.clicked.connect(self.apply_notch)
         self.ui.pushButton_22.clicked.connect(self.help)
         self.ui.horizontalScrollBar.valueChanged.connect(self.scrollbar_moved)
-        self.ui.epoch_length.valueChanged.connect(self.val_ch_epl)
+        self.ui.epoch_length.valueChanged.connect(self.update_epl)#self.val_ch_epl)
         # self.ui.epoch_length.editingFinished.connect(self.update_epl) not
         # working well for now
         self.ui.epoch_length_2.valueChanged.connect(self.update_tracel)
@@ -190,7 +190,7 @@ class MyForm(QMainWindow):
         self.manual_score2s = []
         self.auto_score2s = []
         self.currentpath = ""
-        self.epochl = 4
+        self.epochl = self.ui.epoch_length.value()
         self.tracedur = 40
         self.edfname = ""
         self.scorefile = ""
@@ -581,9 +581,11 @@ class MyForm(QMainWindow):
         freqs2s = np.fft.fftfreq(np2sep, 1 / self.sr)
         indx = np.where(freqs2s >= 0)[0]
         fftmat2s = np.zeros((eegmat2s.shape[0], len(indx)))
+        maxfrec = np.zeros(eegmat2s.shape[0])
         freqs2s = freqs2s[indx]
         for epoch in range(len(self.score)*int(self.epochl/2)):
             fftmat2s[epoch, :] = np.abs(np.fft.fft(eegmat2s[epoch, :]))[indx]
+            maxfrec[epoch] = freqs2s[indx[np.argmax(fftmat2s[epoch, :] )]]
         # GEt features:
         # 1- Power bands
         g1i = 125
@@ -621,18 +623,18 @@ class MyForm(QMainWindow):
         self.emgrms[self.emgrms < 1E-10] = 1E-10
         self.eegrms[self.eegrms < 1E-10] = 1E-10
         self.delta[self.delta < 1E-10] = 1E-10
-
         # Index for each state, including wake artifact
         self.indnr = (self.delta**3) / \
             (self.emgrms * self.gamma1 * self.thetad)
+        boostnr = np.where(maxfrec<4.5)[0]
+        self.indnr[boostnr]*=2
         self.indw = self.emgrms * self.gamma2 / self.eegrms
         self.indwa = self.emgrms * self.gamma1 * self.delta**2
-        self.indrem = self.theta * (self.thetad**3) / self.emgrms
+        self.indrem = self.theta * (self.thetad**3) / (self.emgrms**2)
 
         if self.ui.checkBox_2.isChecked():  # Full auto.
             # Requires >4% of the epochs to be REM, 2% to be WA and 20% to be
             # NR and W
-
             nreps = np.where(self.indnr > np.percentile(self.indnr, 80))[0]
             self.autoscore[nreps] = 1
             weps = np.where(self.indw > np.percentile(self.indw, 80))[0]
@@ -693,7 +695,7 @@ class MyForm(QMainWindow):
 
         # Train ML
         # Define the XGBoost model
-        y_train[y_train == 0.1] = 3
+        y_train[y_train == 0.1] = 3#Must be integer for XGboost training
 
         classes_weights = class_weight.compute_sample_weight(
             class_weight='balanced',
@@ -1517,13 +1519,13 @@ class MyForm(QMainWindow):
             print("Duration:", self.edf.times[-1])
             # formating time
             self.ui.label_8.setText(
-                "Start date:" +
+                "Start date: " +
                 time.strftime(
                     "%m/%d/%Y %H:%M:%S ",
                     time.gmtime(
                         self.tstart.timestamp())))
             self.ui.label_10.setText(
-                "End date:" +
+                "End date: " +
                 time.strftime(
                     "%m/%d/%Y %H:%M:%S ",
                     dt2))
