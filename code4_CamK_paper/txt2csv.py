@@ -4,7 +4,9 @@ import os
 #dirtxt=r'C:\Users\US Retail\Documents\camkpaper\processed_data\camK_dosing'
 #dirtxt=r'C:\Users\US Retail\Documents\camkpaper\Peng_VG2\txtfiles'
 #dirtxt=r'C:\Users\US Retail\Documents\camkpaper\processed_data\mats_gad_cre_camK_dta\dosing'
-dirtxt=r'C:\Users\US Retail\Documents\camkpaper\processed_data\mats_gad_cre_camK_dta\dosing\txt_cre'
+#dirtxt=r'C:\Users\US Retail\Documents\camkpaper\processed_data\mats_gad_cre_camK_dta\dosing\txt_cre'
+#dirtxt = r'C:\Users\US Retail\Documents\camkpaper\wt_dose_camKii\newblinemats'
+dirtxt = r'C:\Users\US Retail\Documents\camkpaper\wt_dose_camKii\statsnewmats4'
 txtfiles = os.listdir(dirtxt)
 txtfiles=[f for f in txtfiles if f.endswith('.txt')]
 #convert all txt files to csv
@@ -16,8 +18,9 @@ for fntxt in txtfiles:
     with open(fn) as f:
             lines = f.readlines()
     posc=0
-    #cnds=['ALM-CNO','ALM-SAL','VEH-CNO','VEH-SAL']
-    cnds=['SAL','CNO']
+    #CHANGE AS NEEDED:
+    cnds=['ALM-CNO','ALM-SAL','VEH-CNO','VEH-SAL']
+    #cnds=['SAL','CNO']
     firstZT=3
     for i,l in enumerate(lines):
         df1l = pd.DataFrame(columns=cols)
