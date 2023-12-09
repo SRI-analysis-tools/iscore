@@ -1047,8 +1047,8 @@ class MyForm(QMainWindow):
         plt.xlabel('Frequency (Hz)', fontsize=15)
         plt.title('FFT by state', fontsize=18)
         plt.legend()
-        plt.show()
-        # Plot again for selected freqs in linear scale
+        #plt.show()
+        # Plot a gain for selected freqs in linear scale
         plt.figure(figsize=(15, 11))
         plt.subplot(2, 1, 1)
         if len(indw) > 0:
@@ -1084,7 +1084,7 @@ class MyForm(QMainWindow):
         plt.pie(pt, labels=x_labels, colors=colors, autopct='%1.1f%%')
         plt.title('Percentage of time', fontsize=19)
         plt.tight_layout()
-        plt.show()
+        #plt.show()
         # Save csv file with epoch num, Zt time, time, and FFT for each freq in
         # 2 Hz bins
         # set tick values to the x-coordinates of the data points
@@ -1114,7 +1114,7 @@ class MyForm(QMainWindow):
                 1, np.floor(
                     np.max(
                         self.freqstats)))]
-        ffts = pd.DataFrame(columns=cols + self.freqsp)
+        ffts = pd.DataFrame(columns=cols + list(self.freqsp))
         ffts['Epoch'] = 1 + np.arange(len(self.score))
         ffts['Time'] = ticks[0:neps]
         ffts['ZT'] = tickszt0[:neps]
@@ -1269,8 +1269,30 @@ class MyForm(QMainWindow):
         plt.ylabel('N', fontsize=15)
         plt.legend()
         plt.tight_layout()
-        plt.show()
+        
 
+        #Add scatter plot of Htheta and EMG and show corrcoef
+        htw = []
+        rms_emg=[]
+        indw = np.where(self.score == 0)[0]
+        posp = np.where((self.freqstats>=8) & (self.freqstats<=11))[0]
+        
+        print('Shape fftstats:',np.shape(self.fftstats))
+        self.freqstats = self.freqs[posp].copy()
+        for ep in indw:
+            #add average power in htheta range for each W epoch
+            htw.append(np.mean(self.fftstats[ep,posp]))
+            pos = self.npep * ep
+    
+            emgep = self.edfmat[self.ui.EMGch.value()-1, pos:pos + self.npep]
+            rms_emg.append(np.sqrt(np.sum(emgep**2)))
+        plt.figure()
+        plt.plot(htw,rms_emg,'g.')
+        plt.xlabel('High Thetha power',fontsize=15)
+        plt.ylabel('RMS EMG',fontsize=15)
+        c = np.corrcoef(htw,rms_emg)[0,1]
+        plt.title(f'Correlatation:{np.round(c,2)}')
+        plt.show()
         return None
 
     def undo(self):
